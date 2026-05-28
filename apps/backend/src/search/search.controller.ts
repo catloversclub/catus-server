@@ -16,7 +16,7 @@ export class SearchController {
   }
 
   @Get("autocomplete")
-  autocomplete(@Query() query: SearchAutocompleteQueryDto) {
-    return this.searchService.autocomplete(query)
+  autocomplete(@Req() req: AuthenticatedRequest, @Query() query: SearchAutocompleteQueryDto) {
+    return this.searchService.autocomplete(req.user.id!, query)
   }
 }

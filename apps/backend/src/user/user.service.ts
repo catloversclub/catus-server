@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common"
+import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common"
 import { getImageExtension } from "@app/storage/image-types.const"
 import { ConfigService } from "@nestjs/config"
 import type { CreateUserDto } from "./dto/create-user.dto"
@@ -6,6 +6,7 @@ import type { UpdateUserDto } from "./dto/update-user.dto"
 import { PrismaService } from "@app/prisma/prisma.service"
 import { StorageService } from "@app/storage/storage.service"
 import { NotificationService } from "@app/notification/notification.service"
+import { getUserBlockBetweenWhere, getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { uuidv7 } from "uuidv7"
 import type { Provider } from "@prisma/client"
 
@@ -71,8 +72,11 @@ export class UserService {
   }
 
   async getOne(userId: string, viewerId: string) {
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
+    const user = await this.prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+        ...getVisibleUserWhere(viewerId),
+      },
       select: {
         nickname: true,
         profileImageUrl: true,
@@ -106,6 +110,15 @@ export class UserService {
         }),
         tx.user.findUniqueOrThrow({ where: { id: followingId }, select: { id: true } }),
       ])
+
+      const block = await tx.userBlock.findFirst({
+        where: getUserBlockBetweenWhere(followerId, followingId),
+        select: { id: true },
+      })
+
+      if (block) {
+        throw new ForbiddenException("You cannot follow a blocked user")
+      }
 
       await tx.follow.create({
         data: { followerId, followingId },
@@ -183,11 +196,20 @@ export class UserService {
   async getFollowers(myId: string, userId: string, cursor?: number | null, take = 20) {
     const pagination = this.prisma.getPaginator(cursor ?? null)
 
+    await this.prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+        ...getVisibleUserWhere(myId),
+      },
+      select: { id: true },
+    })
+
     const followers = await this.prisma.follow.findMany({
       ...pagination,
       take,
       where: {
         followingId: userId,
+        follower: getVisibleUserWhere(myId),
       },
       select: {
         id: true,
@@ -234,11 +256,20 @@ export class UserService {
   async getFollowings(myId: string, userId: string, cursor?: number | null, take = 20) {
     const pagination = this.prisma.getPaginator(cursor ?? null)
 
+    await this.prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+        ...getVisibleUserWhere(myId),
+      },
+      select: { id: true },
+    })
+
     const followers = await this.prisma.follow.findMany({
       ...pagination,
       take,
       where: {
         followerId: userId,
+        following: getVisibleUserWhere(myId),
       },
       select: {
         id: true,
@@ -282,6 +313,138 @@ export class UserService {
       nickname: item.following.nickname,
       profileImageUrl: item.following.profileImageUrl,
       isFollowedByMe: myId === userId ? true : followedSet.has(item.following.id),
+      cursor: item.id,
+    }))
+  }
+
+  async block(blockerId: string, blockedId: string) {
+    if (blockerId === blockedId) {
+      throw new BadRequestException("You cannot block yourself")
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.findUniqueOrThrow({
+        where: { id: blockedId },
+        select: { id: true },
+      })
+
+      try {
+        await tx.userBlock.create({
+          data: {
+            blockerId,
+            blockedId,
+          },
+        })
+      } catch (err: any) {
+        if (err.code === "P2002") {
+          return
+        }
+
+        throw err
+      }
+
+      const [blockingFollow, blockedByFollow] = await Promise.all([
+        tx.follow.deleteMany({
+          where: {
+            followerId: blockerId,
+            followingId: blockedId,
+          },
+        }),
+        tx.follow.deleteMany({
+          where: {
+            followerId: blockedId,
+            followingId: blockerId,
+          },
+        }),
+      ])
+
+      await Promise.all([
+        ...(blockingFollow.count > 0
+          ? [
+              tx.user.update({
+                where: { id: blockerId },
+                data: { followingCount: { decrement: blockingFollow.count } },
+                select: { id: true },
+              }),
+              tx.user.update({
+                where: { id: blockedId },
+                data: { followerCount: { decrement: blockingFollow.count } },
+                select: { id: true },
+              }),
+            ]
+          : []),
+        ...(blockedByFollow.count > 0
+          ? [
+              tx.user.update({
+                where: { id: blockedId },
+                data: { followingCount: { decrement: blockedByFollow.count } },
+                select: { id: true },
+              }),
+              tx.user.update({
+                where: { id: blockerId },
+                data: { followerCount: { decrement: blockedByFollow.count } },
+                select: { id: true },
+              }),
+            ]
+          : []),
+      ])
+    })
+
+    return {
+      isBlockedByMe: true,
+    }
+  }
+
+  async unblock(blockerId: string, blockedId: string) {
+    if (blockerId === blockedId) {
+      throw new BadRequestException("You cannot unblock yourself")
+    }
+
+    await this.prisma.user.findUniqueOrThrow({
+      where: { id: blockedId },
+      select: { id: true },
+    })
+
+    await this.prisma.userBlock.deleteMany({
+      where: {
+        blockerId,
+        blockedId,
+      },
+    })
+
+    return {
+      isBlockedByMe: false,
+    }
+  }
+
+  async getBlocks(userId: string, cursor?: number | null, take = 20) {
+    const pagination = this.prisma.getPaginator(cursor ?? null)
+
+    const blocks = await this.prisma.userBlock.findMany({
+      ...pagination,
+      take,
+      where: {
+        blockerId: userId,
+      },
+      select: {
+        id: true,
+        blocked: {
+          select: {
+            id: true,
+            nickname: true,
+            profileImageUrl: true,
+          },
+        },
+      },
+      orderBy: {
+        id: "desc",
+      },
+    })
+
+    return blocks.map((item) => ({
+      id: item.blocked.id,
+      nickname: item.blocked.nickname,
+      profileImageUrl: item.blocked.profileImageUrl,
       cursor: item.id,
     }))
   }

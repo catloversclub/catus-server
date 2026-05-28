@@ -67,6 +67,41 @@ describe("PostService", () => {
           gte: new Date("2026-05-27T15:00:00.000Z"),
           lt: new Date("2026-05-28T15:00:00.000Z"),
         },
+        post: {
+          author: {
+            blocking: {
+              none: {
+                blockedId: "viewer-id",
+              },
+            },
+            blockedBy: {
+              none: {
+                blockerId: "viewer-id",
+              },
+            },
+          },
+          OR: [
+            {
+              catId: null,
+            },
+            {
+              cat: {
+                butler: {
+                  blocking: {
+                    none: {
+                      blockedId: "viewer-id",
+                    },
+                  },
+                  blockedBy: {
+                    none: {
+                      blockerId: "viewer-id",
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
       },
       _count: {
         postId: true,

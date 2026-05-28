@@ -21,8 +21,8 @@ export class CatController {
   }
 
   @Get(":id")
-  findOne(@Param("id") id: string) {
-    return this.catService.findOne(id)
+  findOne(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.catService.findOne(id, req.user.id!)
   }
   @Patch(":id")
   update(
@@ -54,7 +54,7 @@ export class UserCatController {
   constructor(private readonly catService: CatService) {}
 
   @Get(":id/cats")
-  getUserCats(@Param("id") userId: string) {
-    return this.catService.getUserCats(userId)
+  getUserCats(@Req() req: AuthenticatedRequest, @Param("id") userId: string) {
+    return this.catService.getUserCats(userId, req.user.id!)
   }
 }

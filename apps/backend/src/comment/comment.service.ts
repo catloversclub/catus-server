@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common"
 import { PrismaService } from "@app/prisma/prisma.service"
 import { NotificationService } from "@app/notification/notification.service"
+import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { CreateCommentDto } from "./dto/create-comment.dto"
 
 @Injectable()
@@ -10,6 +11,29 @@ export class CommentService {
     private readonly notificationService: NotificationService,
   ) {}
 
+  private getVisiblePostWhere(viewerId: string) {
+    return {
+      author: getVisibleUserWhere(viewerId),
+      OR: [
+        {
+          catId: null,
+        },
+        {
+          cat: {
+            butler: getVisibleUserWhere(viewerId),
+          },
+        },
+      ],
+    }
+  }
+
+  private getVisibleCommentWhere(viewerId: string) {
+    return {
+      author: getVisibleUserWhere(viewerId),
+      post: this.getVisiblePostWhere(viewerId),
+    }
+  }
+
   async create(postId: string, authorId: string, dto: CreateCommentDto) {
     const { content, parentId } = dto
     if (!content?.trim()) {
@@ -17,8 +41,11 @@ export class CommentService {
     }
 
     const [post, actor] = await Promise.all([
-      this.prisma.post.findUnique({
-        where: { id: postId },
+      this.prisma.post.findFirst({
+        where: {
+          id: postId,
+          ...this.getVisiblePostWhere(authorId),
+        },
         select: { id: true, authorId: true },
       }),
       this.prisma.user.findUniqueOrThrow({
@@ -35,8 +62,12 @@ export class CommentService {
     let parent: { id: string; postId: string; authorId: string } | null = null
 
     if (parentId) {
-      parent = await this.prisma.comment.findUnique({
-        where: { id: parentId },
+      parent = await this.prisma.comment.findFirst({
+        where: {
+          id: parentId,
+          postId,
+          ...this.getVisibleCommentWhere(authorId),
+        },
         select: { id: true, postId: true, authorId: true },
       })
       if (!parent || parent.postId !== postId) {
@@ -90,12 +121,21 @@ export class CommentService {
   async getPostComments(postId: string, userId: string, cursor?: string | null, take = 20) {
     const pagination = this.prisma.getPaginator(cursor ?? null)
 
+    await this.prisma.post.findFirstOrThrow({
+      where: {
+        id: postId,
+        ...this.getVisiblePostWhere(userId),
+      },
+      select: { id: true },
+    })
+
     const parents = await this.prisma.comment.findMany({
       ...pagination,
       take,
       where: {
         postId,
         parentId: null,
+        ...this.getVisibleCommentWhere(userId),
       },
       orderBy: { id: "desc" },
       include: {
@@ -122,6 +162,7 @@ export class CommentService {
     const replies = await this.prisma.comment.findMany({
       where: {
         parentId: { in: parentIds },
+        ...this.getVisibleCommentWhere(userId),
       },
       orderBy: { id: "asc" },
       include: {
@@ -175,8 +216,11 @@ export class CommentService {
 
   async likeComment(commentId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const comment = await tx.comment.findUnique({
-        where: { id: commentId },
+      const comment = await tx.comment.findFirst({
+        where: {
+          id: commentId,
+          ...this.getVisibleCommentWhere(userId),
+        },
         select: { id: true },
       })
 
@@ -222,8 +266,11 @@ export class CommentService {
 
   async unlikeComment(commentId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const comment = await tx.comment.findUnique({
-        where: { id: commentId },
+      const comment = await tx.comment.findFirst({
+        where: {
+          id: commentId,
+          ...this.getVisibleCommentWhere(userId),
+        },
         select: { id: true },
       })
 

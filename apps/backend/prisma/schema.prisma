@@ -36,6 +36,8 @@ model User {
   Report                Report[]
   PushToken             PushToken[]
   notifications         Notification[]
+  blocking              UserBlock[] @relation("UserBlocks")
+  blockedBy             UserBlock[] @relation("UserBlockedBy")
 
   @@map("user")
 }
@@ -67,6 +69,21 @@ model Follow {
   @@index([followerId])
   @@index([followingId])
   @@map("follow")
+}
+
+model UserBlock {
+  id        Int      @id @default(autoincrement())
+  blockerId String   @map("blocker_id")
+  blockedId String   @map("blocked_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  blocker User @relation("UserBlocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("UserBlockedBy", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId, id])
+  @@index([blockedId, blockerId])
+  @@map("user_block")
 }
 
 enum Provider {

@@ -1,0 +1,16 @@
+meta {
+  name: Get Blocked Users
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/user/blocks?take=20
+  body: none
+  auth: inherit
+}
+
+params:query {
+  take: 20
+  ~cursor:
+}

@@ -5,6 +5,7 @@ import { PrismaService } from "@app/prisma/prisma.service"
 import { StorageService } from "@app/storage/storage.service"
 import { ConfigService } from "@nestjs/config"
 import { NotificationService } from "@app/notification/notification.service"
+import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { uuidv7 } from "uuidv7"
 import axios from "axios"
 
@@ -51,6 +52,22 @@ export class PostService {
     } as const
   }
 
+  private getVisiblePostWhere(viewerId: string) {
+    return {
+      author: getVisibleUserWhere(viewerId),
+      OR: [
+        {
+          catId: null,
+        },
+        {
+          cat: {
+            butler: getVisibleUserWhere(viewerId),
+          },
+        },
+      ],
+    }
+  }
+
   private attachViewerState<T extends PostWithViewerState>(post: T) {
     const { likes, bookmarks, ...rest } = post
 
@@ -78,6 +95,16 @@ export class PostService {
 
   async create(authorId: string, createPostDto: CreatePostDto) {
     const { catId, content, imageUrls } = createPostDto
+
+    if (catId) {
+      await this.prisma.cat.findFirstOrThrow({
+        where: {
+          id: catId,
+          butler: getVisibleUserWhere(authorId),
+        },
+        select: { id: true },
+      })
+    }
 
     const post = await this.prisma.post.create({
       data: {
@@ -140,10 +167,21 @@ export class PostService {
   async getUserPosts(userId: string, viewerId: string, cursor?: string | null, take = 20) {
     const pagination = this.prisma.getPaginator(cursor ?? null)
 
+    await this.prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+        ...getVisibleUserWhere(viewerId),
+      },
+      select: { id: true },
+    })
+
     const posts = await this.prisma.post.findMany({
       ...pagination,
       take,
-      where: { authorId: userId },
+      where: {
+        authorId: userId,
+        ...this.getVisiblePostWhere(viewerId),
+      },
       orderBy: { id: "desc" },
       include: this.getPostInclude(viewerId),
     })
@@ -162,6 +200,7 @@ export class PostService {
       ...pagination,
       take,
       where: {
+        ...this.getVisiblePostWhere(viewerId),
         bookmarks: {
           some: {
             userId: viewerId,
@@ -182,6 +221,7 @@ export class PostService {
       ...pagination,
       take,
       where: {
+        ...this.getVisiblePostWhere(viewerId),
         likes: {
           some: {
             userId: viewerId,
@@ -198,10 +238,21 @@ export class PostService {
   async getCatPosts(catId: string, viewerId: string, cursor?: string | null, take = 20) {
     const pagination = this.prisma.getPaginator(cursor ?? null)
 
+    await this.prisma.cat.findFirstOrThrow({
+      where: {
+        id: catId,
+        butler: getVisibleUserWhere(viewerId),
+      },
+      select: { id: true },
+    })
+
     const posts = await this.prisma.post.findMany({
       ...pagination,
       take,
-      where: { catId },
+      where: {
+        catId,
+        ...this.getVisiblePostWhere(viewerId),
+      },
       orderBy: { id: "desc" },
       include: this.getPostInclude(viewerId),
     })
@@ -227,6 +278,7 @@ export class PostService {
       ...pagination,
       take,
       where: {
+        ...this.getVisiblePostWhere(userId),
         cat: {
           OR: [
             {
@@ -261,6 +313,7 @@ export class PostService {
       take,
       where: {
         author: {
+          ...getVisibleUserWhere(userId),
           followers: {
             some: {
               followerId: userId,
@@ -289,6 +342,7 @@ export class PostService {
           gte: startAt,
           lt: endAt,
         },
+        post: this.getVisiblePostWhere(viewerId),
       },
       _count: {
         postId: true,
@@ -345,6 +399,7 @@ export class PostService {
     const posts = await this.prisma.post.findMany({
       ...pagination,
       take,
+      where: this.getVisiblePostWhere(viewerId),
       orderBy: { id: "desc" },
       include: this.getPostInclude(viewerId),
     })
@@ -353,8 +408,11 @@ export class PostService {
   }
 
   async findOne(id: string, viewerId: string) {
-    const post = await this.prisma.post.findUniqueOrThrow({
-      where: { id },
+    const post = await this.prisma.post.findFirstOrThrow({
+      where: {
+        id,
+        ...this.getVisiblePostWhere(viewerId),
+      },
       include: this.getPostInclude(viewerId),
     })
 
@@ -377,6 +435,16 @@ export class PostService {
 
     const { catId, ...rest } = updatePostDto
 
+    if (catId) {
+      await this.prisma.cat.findFirstOrThrow({
+        where: {
+          id: catId,
+          butler: getVisibleUserWhere(userId),
+        },
+        select: { id: true },
+      })
+    }
+
     const post = await this.prisma.post.update({
       where: { id },
       data: {
@@ -398,8 +466,11 @@ export class PostService {
   async likePost(postId: string, userId: string) {
     const result = await this.prisma.$transaction(async (tx) => {
       const [post, actor] = await Promise.all([
-        tx.post.findUnique({
-          where: { id: postId },
+        tx.post.findFirst({
+          where: {
+            id: postId,
+            ...this.getVisiblePostWhere(userId),
+          },
           select: { id: true, authorId: true },
         }),
         tx.user.findUniqueOrThrow({
@@ -465,8 +536,11 @@ export class PostService {
 
   async unlikePost(postId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const post = await tx.post.findUnique({
-        where: { id: postId },
+      const post = await tx.post.findFirst({
+        where: {
+          id: postId,
+          ...this.getVisiblePostWhere(userId),
+        },
         select: { id: true },
       })
 
@@ -521,8 +595,11 @@ export class PostService {
 
   async bookmarkPost(postId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const post = await tx.post.findUnique({
-        where: { id: postId },
+      const post = await tx.post.findFirst({
+        where: {
+          id: postId,
+          ...this.getVisiblePostWhere(userId),
+        },
         select: { id: true },
       })
 
@@ -548,8 +625,11 @@ export class PostService {
 
   async unbookmarkPost(postId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const post = await tx.post.findUnique({
-        where: { id: postId },
+      const post = await tx.post.findFirst({
+        where: {
+          id: postId,
+          ...this.getVisiblePostWhere(userId),
+        },
         select: { id: true },
       })
 

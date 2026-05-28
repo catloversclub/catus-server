@@ -1,0 +1,14 @@
+meta {
+  name: Unblock User
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/user/:id/block
+  auth: inherit
+}
+
+params:path {
+  id:
+}

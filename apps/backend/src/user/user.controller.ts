@@ -41,6 +41,15 @@ export class UserController {
     return this.userService.getMe(req.user.id!)
   }
 
+  @Get("/blocks")
+  getBlocks(
+    @Req() req: AuthenticatedRequest,
+    @Query("cursor", new ParseIntPipe({ optional: true })) cursor?: number,
+    @Query("take", new DefaultValuePipe(20), ParseIntPipe) take?: number,
+  ) {
+    return this.userService.getBlocks(req.user.id!, cursor, take)
+  }
+
   @Get(":id/followers")
   getFollowers(
     @Req() req: AuthenticatedRequest,
@@ -74,6 +83,16 @@ export class UserController {
   @Delete(":id/follow")
   unfollow(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
     return this.userService.unfollow(req.user.id!, id)
+  }
+
+  @Post(":id/block")
+  block(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.userService.block(req.user.id!, id)
+  }
+
+  @Delete(":id/block")
+  unblock(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.userService.unblock(req.user.id!, id)
   }
 
   @Patch("/me")

@@ -1,0 +1,14 @@
+meta {
+  name: Block User
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/user/:id/block
+  auth: inherit
+}
+
+params:path {
+  id:
+}

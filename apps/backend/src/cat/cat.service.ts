@@ -5,6 +5,7 @@ import { CreateCatDto } from "./dto/create-cat.dto"
 import { UpdateCatDto } from "./dto/update-cat.dto"
 import { PrismaService } from "@app/prisma/prisma.service"
 import { StorageService } from "@app/storage/storage.service"
+import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { uuidv7 } from "uuidv7"
 
 @Injectable()
@@ -84,9 +85,20 @@ export class CatService {
     return this.formatCatProfileList(cats)
   }
 
-  async getUserCats(userId: string) {
+  async getUserCats(userId: string, viewerId: string) {
+    await this.prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+        ...getVisibleUserWhere(viewerId),
+      },
+      select: { id: true },
+    })
+
     const cats = await this.prisma.cat.findMany({
-      where: { butlerId: userId },
+      where: {
+        butlerId: userId,
+        butler: getVisibleUserWhere(viewerId),
+      },
       orderBy: { id: "desc" },
       include: this.catProfileInclude,
     })
@@ -94,9 +106,12 @@ export class CatService {
     return this.formatCatProfileList(cats)
   }
 
-  async findOne(id: string) {
-    const cat = await this.prisma.cat.findUniqueOrThrow({
-      where: { id },
+  async findOne(id: string, viewerId: string) {
+    const cat = await this.prisma.cat.findFirstOrThrow({
+      where: {
+        id,
+        butler: getVisibleUserWhere(viewerId),
+      },
       include: this.catProfileInclude,
     })
 

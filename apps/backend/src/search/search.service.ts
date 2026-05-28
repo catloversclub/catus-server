@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common"
 import { PrismaService } from "@app/prisma/prisma.service"
+import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { SearchQueryDto, SearchTypeDto } from "./dto/search-query.dto"
 import { SearchAutocompleteQueryDto } from "./dto/search-autocomplete-query.dto"
 
@@ -25,6 +26,7 @@ export class SearchService {
 
     return this.searchProfiles(
       keyword,
+      viewerId,
       searchQueryDto.userCursor ?? null,
       searchQueryDto.catCursor ?? null,
       take,
@@ -53,6 +55,22 @@ export class SearchService {
     } as const
   }
 
+  private getVisiblePostWhere(viewerId: string) {
+    return {
+      author: getVisibleUserWhere(viewerId),
+      OR: [
+        {
+          catId: null,
+        },
+        {
+          cat: {
+            butler: getVisibleUserWhere(viewerId),
+          },
+        },
+      ],
+    }
+  }
+
   private attachViewerState<T extends PostWithViewerState>(post: T) {
     const { likes, bookmarks, ...rest } = post
 
@@ -63,13 +81,13 @@ export class SearchService {
     }
   }
 
-  async autocomplete(searchAutocompleteQueryDto: SearchAutocompleteQueryDto) {
+  async autocomplete(viewerId: string, searchAutocompleteQueryDto: SearchAutocompleteQueryDto) {
     const rawKeyword = searchAutocompleteQueryDto.query.trimStart()
     const keyword = rawKeyword.trim()
 
     const [profileResult, postResult] = await Promise.all([
-      this.autocompleteProfiles(keyword),
-      this.autocompletePosts(rawKeyword),
+      this.autocompleteProfiles(keyword, viewerId),
+      this.autocompletePosts(rawKeyword, viewerId),
     ])
 
     return {
@@ -78,11 +96,12 @@ export class SearchService {
     }
   }
 
-  private async autocompleteProfiles(keyword: string) {
+  private async autocompleteProfiles(keyword: string, viewerId: string) {
     const [users, cats] = await Promise.all([
       this.prisma.user.findMany({
         take: SearchService.AUTOCOMPLETE_TAKE * 5,
         where: {
+          ...getVisibleUserWhere(viewerId),
           nickname: {
             startsWith: keyword,
             mode: "insensitive",
@@ -97,6 +116,7 @@ export class SearchService {
       this.prisma.cat.findMany({
         take: SearchService.AUTOCOMPLETE_TAKE * 5,
         where: {
+          butler: getVisibleUserWhere(viewerId),
           OR: [
             {
               name: {
@@ -142,7 +162,7 @@ export class SearchService {
     }
   }
 
-  private async autocompletePosts(rawKeyword: string) {
+  private async autocompletePosts(rawKeyword: string, viewerId: string) {
     const searchKeyword = rawKeyword.trimStart()
 
     if (!searchKeyword.trim()) {
@@ -152,6 +172,7 @@ export class SearchService {
     const posts = await this.prisma.post.findMany({
       take: SearchService.AUTOCOMPLETE_TAKE * 5,
       where: {
+        ...this.getVisiblePostWhere(viewerId),
         content: {
           startsWith: searchKeyword,
           mode: "insensitive",
@@ -222,6 +243,7 @@ export class SearchService {
         ...pagination,
         take,
         where: {
+          ...this.getVisiblePostWhere(viewerId),
           content: {
             startsWith: keyword,
             mode: "insensitive",
@@ -240,6 +262,7 @@ export class SearchService {
 
   private async searchProfiles(
     keyword: string,
+    viewerId: string,
     userCursor?: string | null,
     catCursor?: string | null,
     take = SearchService.DEFAULT_TAKE,
@@ -252,6 +275,7 @@ export class SearchService {
         ...userPagination,
         take,
         where: {
+          ...getVisibleUserWhere(viewerId),
           nickname: {
             startsWith: keyword,
             mode: "insensitive",
@@ -270,6 +294,7 @@ export class SearchService {
         ...catPagination,
         take,
         where: {
+          butler: getVisibleUserWhere(viewerId),
           OR: [
             {
               name: {

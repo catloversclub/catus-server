@@ -1,0 +1,16 @@
+meta {
+  name: Get Notifications
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/notification?take=20
+  body: none
+  auth: inherit
+}
+
+params:query {
+  take: 20
+  ~cursor:
+}

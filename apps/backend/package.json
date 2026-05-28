@@ -82,6 +82,10 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "moduleNameMapper": {
+      "^@app/(.*)$": "<rootDir>/$1",
+      "^@auth/(.*)$": "<rootDir>/auth/$1"
+    },
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

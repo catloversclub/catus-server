@@ -15,6 +15,7 @@ type PostWithViewerState = {
 
 @Injectable()
 export class PostService {
+  private static readonly KST_OFFSET_MS = 9 * 60 * 60 * 1000
   private readonly bucket: string
   private readonly webhookUrl: string
 
@@ -62,6 +63,17 @@ export class PostService {
 
   private attachViewerStateList<T extends PostWithViewerState>(posts: T[]) {
     return posts.map((post) => this.attachViewerState(post))
+  }
+
+  private getTodayRangeInKst() {
+    const now = new Date()
+    const kstNow = new Date(now.getTime() + PostService.KST_OFFSET_MS)
+    kstNow.setUTCHours(0, 0, 0, 0)
+
+    const startAt = new Date(kstNow.getTime() - PostService.KST_OFFSET_MS)
+    const endAt = new Date(startAt.getTime() + 24 * 60 * 60 * 1000)
+
+    return { startAt, endAt }
   }
 
   async create(authorId: string, createPostDto: CreatePostDto) {
@@ -261,6 +273,70 @@ export class PostService {
     })
 
     return this.attachViewerStateList(posts)
+  }
+
+  async getDailyPopularFeed(viewerId: string, take = 10) {
+    if (take < 1) {
+      throw new BadRequestException("take must be at least 1")
+    }
+
+    const { startAt, endAt } = this.getTodayRangeInKst()
+
+    const dailyLikeCounts = await this.prisma.postLike.groupBy({
+      by: ["postId"],
+      where: {
+        createdAt: {
+          gte: startAt,
+          lt: endAt,
+        },
+      },
+      _count: {
+        postId: true,
+      },
+      orderBy: [
+        {
+          _count: {
+            postId: "desc",
+          },
+        },
+        {
+          postId: "desc",
+        },
+      ],
+      take,
+    })
+
+    const postIds = dailyLikeCounts.map((dailyLikeCount) => dailyLikeCount.postId)
+
+    if (postIds.length === 0) {
+      return []
+    }
+
+    const posts = await this.prisma.post.findMany({
+      where: {
+        id: {
+          in: postIds,
+        },
+      },
+      include: this.getPostInclude(viewerId),
+    })
+
+    const postById = new Map(posts.map((post) => [post.id, post]))
+
+    return dailyLikeCounts.flatMap((dailyLikeCount) => {
+      const post = postById.get(dailyLikeCount.postId)
+
+      if (!post) {
+        return []
+      }
+
+      return [
+        {
+          ...this.attachViewerState(post),
+          dailyLikeCount: dailyLikeCount._count.postId,
+        },
+      ]
+    })
   }
 
   async findAll(viewerId: string, cursor?: string | null, take = 20) {

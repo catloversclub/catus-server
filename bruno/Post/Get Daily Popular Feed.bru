@@ -1,0 +1,15 @@
+meta {
+  name: Get Daily Popular Feed
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/post/feed/daily-popular?take=10
+  body: none
+  auth: inherit
+}
+
+params:query {
+  take: 10
+}

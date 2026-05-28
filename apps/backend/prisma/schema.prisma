@@ -198,6 +198,7 @@ model PostLike {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([postId, userId])
+  @@index([createdAt, postId])
   @@map("post_like")
 }
 

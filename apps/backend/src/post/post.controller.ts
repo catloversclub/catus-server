@@ -75,6 +75,14 @@ export class PostController {
     return this.postService.getFollowingFeed(req.user.id!, cursor ?? null, take)
   }
 
+  @Get("feed/daily-popular")
+  getDailyPopularFeed(
+    @Req() req: AuthenticatedRequest,
+    @Query("take", new DefaultValuePipe(10), ParseIntPipe) take?: number,
+  ) {
+    return this.postService.getDailyPopularFeed(req.user.id!, take)
+  }
+
   @Get(":id")
   findOne(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
     return this.postService.findOne(id, req.user.id!)

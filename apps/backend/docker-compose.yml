@@ -40,7 +40,6 @@ services:
     env_file: [.env]
     environment:
       - NODE_ENV=production
-      - MOCK_SEED_ON_START=true
     depends_on:
       - postgres
       - minio

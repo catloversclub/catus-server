@@ -5,8 +5,9 @@ on:
     branches: [ main ]
     paths:
       - "apps/backend/**"
-      - "apps/backend/Dockerfile"
+      - "apps/backend/dockerfile"
       - "apps/backend/docker-compose.yml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/backend/Dockerfile
+          file: apps/backend/dockerfile
           platforms: linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository }}:latest
@@ -64,4 +65,4 @@ jobs:
             docker compose pull api
             docker compose up -d --no-deps --force-recreate --scale api=2 api
             docker compose run --rm --entrypoint "" api \
-              sh -c "pnpm dlx prisma@6.17.1 db seed --schema ./prisma/schema.prisma"
+              sh -c "pnpm run db:seed:mock:prod"

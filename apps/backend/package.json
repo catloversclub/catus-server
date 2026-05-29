@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "db:seed": "prisma db seed",
+    "db:seed:mock:prod": "MOCK_SEED_CONFIRM=production node prisma/seed-production-mock.mjs",
     "lint": "eslint ./src --ext .ts",
     "test": "jest",
     "test:watch": "jest --watch",

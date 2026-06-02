@@ -6,9 +6,18 @@ meta {
 
 delete {
   url: {{baseUrl}}/user/:id/follow
+  body: json
   auth: inherit
 }
 
 params:path {
   id:
+}
+
+body:json {
+  {
+    "catIds": [
+      "cat-id-1"
+    ]
+  }
 }

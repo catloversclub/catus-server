@@ -36,8 +36,8 @@ model User {
   Report                Report[]
   PushToken             PushToken[]
   notifications         Notification[]
-  blocking              UserBlock[] @relation("UserBlocks")
-  blockedBy             UserBlock[] @relation("UserBlockedBy")
+  blocking              UserBlock[]    @relation("UserBlocks")
+  blockedBy             UserBlock[]    @relation("UserBlockedBy")
 
   @@map("user")
 }
@@ -62,13 +62,27 @@ model Follow {
   followingId String   @map("following_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  follower  User @relation("Follows", fields: [followerId], references: [id], onDelete: Cascade)
-  following User @relation("FollowedBy", fields: [followingId], references: [id], onDelete: Cascade)
+  follower     User        @relation("Follows", fields: [followerId], references: [id], onDelete: Cascade)
+  following    User        @relation("FollowedBy", fields: [followingId], references: [id], onDelete: Cascade)
+  followedCats FollowCat[]
 
   @@unique([followerId, followingId])
   @@index([followerId])
   @@index([followingId])
   @@map("follow")
+}
+
+model FollowCat {
+  followId  Int      @map("follow_id")
+  catId     String   @map("cat_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  follow Follow @relation(fields: [followId], references: [id], onDelete: Cascade)
+  cat    Cat    @relation(fields: [catId], references: [id], onDelete: Cascade)
+
+  @@id([followId, catId])
+  @@index([catId])
+  @@map("follow_cat")
 }
 
 model UserBlock {
@@ -125,6 +139,7 @@ model Cat {
   appearances   Appearance[]
   personalities Personality[]
   posts         Post[]
+  followedBy    FollowCat[]
 
   @@index([butlerId, id])
   @@map("cat")

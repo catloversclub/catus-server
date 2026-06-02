@@ -130,11 +130,142 @@ describe("UserService", () => {
     }
     const service = buildService(prisma)
 
-    await expect(service.follow("follower-id", "following-id")).rejects.toThrow(
+    await expect(service.follow("follower-id", "following-id", ["cat-id"])).rejects.toThrow(
       ForbiddenException,
     )
     expect(tx.follow.create).not.toHaveBeenCalled()
     expect(notificationService.sendNewFollowerNotification).not.toHaveBeenCalled()
+  })
+
+  it("follows selected cats, removes duplicate ids, and updates counts once", async () => {
+    const tx = {
+      user: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValueOnce({ id: "follower-id", nickname: "follower" })
+          .mockResolvedValueOnce({ id: "following-id" }),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ id: "follower-id", followingCount: 1 })
+          .mockResolvedValueOnce({ id: "following-id", followerCount: 1 }),
+      },
+      userBlock: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      cat: {
+        findMany: jest.fn().mockResolvedValue([{ id: "cat-a" }, { id: "cat-b" }]),
+      },
+      follow: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 10 }),
+      },
+      followCat: {
+        createMany: jest.fn().mockResolvedValue({ count: 2 }),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ catId: "cat-a" }, { catId: "cat-b" }]),
+      },
+    }
+    const prisma = {
+      $transaction: jest.fn((callback) => callback(tx)),
+    }
+    const service = buildService(prisma)
+
+    await expect(
+      service.follow("follower-id", "following-id", ["cat-a", "cat-a", "cat-b"]),
+    ).resolves.toEqual({
+      follower: { id: "follower-id", followingCount: 1 },
+      target: { id: "following-id", followerCount: 1 },
+      isFollowing: true,
+      followedCatIds: ["cat-a", "cat-b"],
+    })
+
+    expect(tx.cat.findMany).toHaveBeenCalledWith({
+      where: {
+        id: {
+          in: ["cat-a", "cat-b"],
+        },
+        butlerId: "following-id",
+      },
+      select: {
+        id: true,
+      },
+    })
+    expect(tx.followCat.createMany).toHaveBeenCalledWith({
+      data: [
+        { followId: 10, catId: "cat-a" },
+        { followId: 10, catId: "cat-b" },
+      ],
+      skipDuplicates: true,
+    })
+    expect(notificationService.sendNewFollowerNotification).toHaveBeenCalledWith({
+      recipientId: "following-id",
+      followerId: "follower-id",
+      followerNickname: "follower",
+    })
+  })
+
+  it("unfollows selected cats and deletes the user follow when none remain", async () => {
+    const tx = {
+      user: {
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValueOnce({ id: "follower-id" })
+          .mockResolvedValueOnce({ id: "following-id" }),
+        update: jest
+          .fn()
+          .mockResolvedValueOnce({ id: "follower-id", followingCount: 0 })
+          .mockResolvedValueOnce({ id: "following-id", followerCount: 0 }),
+      },
+      cat: {
+        findMany: jest.fn().mockResolvedValue([{ id: "cat-a" }, { id: "cat-b" }]),
+      },
+      follow: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 10 }),
+        delete: jest.fn().mockResolvedValue({ id: 10 }),
+      },
+      followCat: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    }
+    const prisma = {
+      $transaction: jest.fn((callback) => callback(tx)),
+    }
+    const service = buildService(prisma)
+
+    await expect(
+      service.unfollow("follower-id", "following-id", ["cat-a", "cat-a", "cat-b"]),
+    ).resolves.toEqual({
+      follower: { id: "follower-id", followingCount: 0 },
+      target: { id: "following-id", followerCount: 0 },
+      isFollowing: false,
+      followedCatIds: [],
+    })
+
+    expect(tx.followCat.deleteMany).toHaveBeenCalledWith({
+      where: {
+        followId: 10,
+        catId: {
+          in: ["cat-a", "cat-b"],
+        },
+      },
+    })
+    expect(tx.follow.delete).toHaveBeenCalledWith({
+      where: {
+        id: 10,
+      },
+    })
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "follower-id" },
+      data: { followingCount: { decrement: 1 } },
+      select: { id: true, followingCount: true },
+    })
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "following-id" },
+      data: { followerCount: { decrement: 1 } },
+      select: { id: true, followerCount: true },
+    })
   })
 
   it("returns blocked users with cursors", async () => {

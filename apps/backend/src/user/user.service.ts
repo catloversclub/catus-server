@@ -8,7 +8,7 @@ import { StorageService } from "@app/storage/storage.service"
 import { NotificationService } from "@app/notification/notification.service"
 import { getUserBlockBetweenWhere, getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { uuidv7 } from "uuidv7"
-import type { Provider } from "@prisma/client"
+import type { Prisma, Provider } from "@prisma/client"
 
 @Injectable()
 export class UserService {
@@ -42,6 +42,38 @@ export class UserService {
     return {
       ...item,
       profileImageUrl: this.storage.normalizeStorageValue(item.profileImageUrl),
+    }
+  }
+
+  private getUniqueCatIds(catIds: string[]) {
+    return [...new Set(catIds.map((catId) => catId.trim()).filter(Boolean))]
+  }
+
+  private assertSelectedCats(catIds: string[]) {
+    if (catIds.length === 0) {
+      throw new BadRequestException("catIds must include at least one cat")
+    }
+  }
+
+  private async assertCatsBelongToUser(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    catIds: string[],
+  ) {
+    const cats = await tx.cat.findMany({
+      where: {
+        id: {
+          in: catIds,
+        },
+        butlerId: userId,
+      },
+      select: {
+        id: true,
+      },
+    })
+
+    if (cats.length !== catIds.length) {
+      throw new BadRequestException("catIds must belong to the followed user")
     }
   }
 
@@ -126,10 +158,13 @@ export class UserService {
     }
   }
 
-  async follow(followerId: string, followingId: string) {
+  async follow(followerId: string, followingId: string, catIds: string[]) {
     if (followerId === followingId) {
       throw new BadRequestException("You cannot follow yourself")
     }
+
+    const selectedCatIds = this.getUniqueCatIds(catIds)
+    this.assertSelectedCats(selectedCatIds)
 
     const result = await this.prisma.$transaction(async (tx) => {
       const [followerUser] = await Promise.all([
@@ -149,46 +184,102 @@ export class UserService {
         throw new ForbiddenException("You cannot follow a blocked user")
       }
 
-      await tx.follow.create({
-        data: { followerId, followingId },
+      await this.assertCatsBelongToUser(tx, followingId, selectedCatIds)
+
+      const existingFollow = await tx.follow.findUnique({
+        where: {
+          followerId_followingId: { followerId, followingId },
+        },
+        select: {
+          id: true,
+        },
       })
 
-      const [follower, target] = await Promise.all([
-        tx.user.update({
-          where: { id: followerId },
-          data: { followingCount: { increment: 1 } },
-          select: { id: true, followingCount: true },
-        }),
-        tx.user.update({
-          where: { id: followingId },
-          data: { followerCount: { increment: 1 } },
-          select: { id: true, followerCount: true },
-        }),
-      ])
+      const follow =
+        existingFollow ??
+        (await tx.follow.create({
+          data: { followerId, followingId },
+          select: { id: true },
+        }))
+
+      await tx.followCat.createMany({
+        data: selectedCatIds.map((catId) => ({
+          followId: follow.id,
+          catId,
+        })),
+        skipDuplicates: true,
+      })
+
+      const followedCats = await tx.followCat.findMany({
+        where: {
+          followId: follow.id,
+        },
+        select: {
+          catId: true,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      })
+
+      const [follower, target] = existingFollow
+        ? await Promise.all([
+            tx.user.findUniqueOrThrow({
+              where: { id: followerId },
+              select: { id: true, followingCount: true },
+            }),
+            tx.user.findUniqueOrThrow({
+              where: { id: followingId },
+              select: { id: true, followerCount: true },
+            }),
+          ])
+        : await Promise.all([
+            tx.user.update({
+              where: { id: followerId },
+              data: { followingCount: { increment: 1 } },
+              select: { id: true, followingCount: true },
+            }),
+            tx.user.update({
+              where: { id: followingId },
+              data: { followerCount: { increment: 1 } },
+              select: { id: true, followerCount: true },
+            }),
+          ])
 
       return {
         follower,
         target,
-        notification: {
-          recipientId: followingId,
-          followerId,
-          followerNickname: followerUser.nickname,
-        },
+        isFollowing: true,
+        followedCatIds: followedCats.map((cat) => cat.catId),
+        notification: existingFollow
+          ? null
+          : {
+              recipientId: followingId,
+              followerId,
+              followerNickname: followerUser.nickname,
+            },
       }
     })
 
-    await this.notificationService.sendNewFollowerNotification(result.notification)
+    if (result.notification) {
+      await this.notificationService.sendNewFollowerNotification(result.notification)
+    }
 
     return {
       follower: result.follower,
       target: result.target,
+      isFollowing: result.isFollowing,
+      followedCatIds: result.followedCatIds,
     }
   }
 
-  async unfollow(followerId: string, followingId: string) {
+  async unfollow(followerId: string, followingId: string, catIds: string[]) {
     if (followerId === followingId) {
       throw new BadRequestException("You cannot unfollow yourself")
     }
+
+    const selectedCatIds = this.getUniqueCatIds(catIds)
+    this.assertSelectedCats(selectedCatIds)
 
     return this.prisma.$transaction(async (tx) => {
       await Promise.all([
@@ -196,9 +287,61 @@ export class UserService {
         tx.user.findUniqueOrThrow({ where: { id: followingId }, select: { id: true } }),
       ])
 
-      await tx.follow.delete({
+      const follow = await tx.follow.findUniqueOrThrow({
         where: {
           followerId_followingId: { followerId, followingId },
+        },
+        select: {
+          id: true,
+        },
+      })
+
+      await this.assertCatsBelongToUser(tx, followingId, selectedCatIds)
+
+      await tx.followCat.deleteMany({
+        where: {
+          followId: follow.id,
+          catId: {
+            in: selectedCatIds,
+          },
+        },
+      })
+
+      const remainingCats = await tx.followCat.findMany({
+        where: {
+          followId: follow.id,
+        },
+        select: {
+          catId: true,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      })
+
+      if (remainingCats.length > 0) {
+        const [follower, target] = await Promise.all([
+          tx.user.findUniqueOrThrow({
+            where: { id: followerId },
+            select: { id: true, followingCount: true },
+          }),
+          tx.user.findUniqueOrThrow({
+            where: { id: followingId },
+            select: { id: true, followerCount: true },
+          }),
+        ])
+
+        return {
+          follower,
+          target,
+          isFollowing: true,
+          followedCatIds: remainingCats.map((cat) => cat.catId),
+        }
+      }
+
+      await tx.follow.delete({
+        where: {
+          id: follow.id,
         },
       })
 
@@ -218,6 +361,8 @@ export class UserService {
       return {
         follower,
         target,
+        isFollowing: false,
+        followedCatIds: [],
       }
     })
   }

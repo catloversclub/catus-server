@@ -15,6 +15,7 @@ import {
 import { UserService } from "./user.service"
 import { CreateUserDto } from "./dto/create-user.dto"
 import { UpdateUserDto } from "./dto/update-user.dto"
+import { FollowCatsDto } from "./dto/follow-cats.dto"
 import { JwtAuthGuard } from "@app/auth/guards/jwt-auth.guard"
 import { OnboardingBypass } from "@app/auth/decorators/onboarding-bypass.decorator"
 import type { AuthenticatedRequest } from "@app/auth/authenticated-request.interface"
@@ -76,13 +77,21 @@ export class UserController {
   }
 
   @Post(":id/follow")
-  follow(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
-    return this.userService.follow(req.user.id!, id)
+  follow(
+    @Req() req: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Body() followCatsDto: FollowCatsDto,
+  ) {
+    return this.userService.follow(req.user.id!, id, followCatsDto.catIds)
   }
 
   @Delete(":id/follow")
-  unfollow(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
-    return this.userService.unfollow(req.user.id!, id)
+  unfollow(
+    @Req() req: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Body() followCatsDto: FollowCatsDto,
+  ) {
+    return this.userService.unfollow(req.user.id!, id, followCatsDto.catIds)
   }
 
   @Post(":id/block")

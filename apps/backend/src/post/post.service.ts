@@ -153,7 +153,7 @@ export class PostService {
       await this.prisma.cat.findFirstOrThrow({
         where: {
           id: catId,
-          butler: getVisibleUserWhere(authorId),
+          butlerId: authorId,
         },
         select: { id: true },
       })
@@ -371,6 +371,15 @@ export class PostService {
             },
           },
         },
+        cat: {
+          followedBy: {
+            some: {
+              follow: {
+                followerId: userId,
+              },
+            },
+          },
+        },
       },
       orderBy: { id: "desc" },
       include: this.getPostInclude(userId),
@@ -490,7 +499,7 @@ export class PostService {
       await this.prisma.cat.findFirstOrThrow({
         where: {
           id: catId,
-          butler: getVisibleUserWhere(userId),
+          butlerId: userId,
         },
         select: { id: true },
       })

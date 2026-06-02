@@ -81,6 +81,20 @@ export class CatService {
     return cats.map((cat) => this.formatCatProfile(cat))
   }
 
+  private formatCatProfileListWithFollowState<
+    T extends {
+      id: string
+      profileImageUrl: string | null
+      appearances: Array<{ id: number }>
+      personalities: Array<{ id: number }>
+    },
+  >(cats: T[], followedCatIds: Set<string>) {
+    return cats.map((cat) => ({
+      ...this.formatCatProfile(cat),
+      isFollowedByMe: followedCatIds.has(cat.id),
+    }))
+  }
+
   async create(userId: string, createCatDto: CreateCatDto) {
     const { appearances, personalities, ...rest } = createCatDto
     const normalizedRest = this.normalizeProfileImageUrl(rest)
@@ -120,16 +134,35 @@ export class CatService {
       select: { id: true },
     })
 
-    const cats = await this.prisma.cat.findMany({
-      where: {
-        butlerId: userId,
-        butler: getVisibleUserWhere(viewerId),
-      },
-      orderBy: { id: "desc" },
-      include: this.catProfileInclude,
-    })
+    const [cats, follow] = await Promise.all([
+      this.prisma.cat.findMany({
+        where: {
+          butlerId: userId,
+          butler: getVisibleUserWhere(viewerId),
+        },
+        orderBy: { id: "desc" },
+        include: this.catProfileInclude,
+      }),
+      this.prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: viewerId,
+            followingId: userId,
+          },
+        },
+        select: {
+          followedCats: {
+            select: {
+              catId: true,
+            },
+          },
+        },
+      }),
+    ])
 
-    return this.formatCatProfileList(cats)
+    const followedCatIds = new Set(follow?.followedCats.map((cat) => cat.catId) ?? [])
+
+    return this.formatCatProfileListWithFollowState(cats, followedCatIds)
   }
 
   async findOne(id: string, viewerId: string) {

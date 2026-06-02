@@ -14,8 +14,11 @@ describe("CommentService", () => {
     },
     getPaginator: jest.fn(),
   }
+  const storage = {
+    getPublicUrl: jest.fn((value: string) => `https://storage.catus.app/catus-media/${value}`),
+  }
 
-  const service = new CommentService(prisma as any, {} as any)
+  const service = new CommentService(prisma as any, {} as any, storage as any)
 
   beforeEach(() => {
     jest.clearAllMocks()

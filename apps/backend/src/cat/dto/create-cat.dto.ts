@@ -8,7 +8,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUrl,
 } from "class-validator"
 
 export enum GenderDto {
@@ -26,7 +25,7 @@ export class CreateCatDto {
   @IsOptional()
   gender?: GenderDto
 
-  @IsUrl()
+  @IsString()
   @IsOptional()
   profileImageUrl?: string | null
 

@@ -6,7 +6,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
 } from "class-validator"
 import { GenderDto } from "./create-cat.dto"
 import { Type } from "class-transformer"
@@ -20,7 +19,7 @@ export class UpdateCatDto {
   @IsOptional()
   gender?: GenderDto
 
-  @IsUrl()
+  @IsString()
   @IsOptional()
   profileImageUrl?: string | null
 

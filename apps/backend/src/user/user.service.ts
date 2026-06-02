@@ -13,6 +13,7 @@ import type { Provider } from "@prisma/client"
 @Injectable()
 export class UserService {
   private readonly bucket: string
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -22,11 +23,34 @@ export class UserService {
     this.bucket = this.config.get<string>("S3_BUCKET") ?? "catus-media"
   }
 
-  create(createUserDto: CreateUserDto, identity: { provider: Provider; id: string }) {
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.storage.getPublicUrl(value) : value
+  }
+
+  private formatProfileImage<T extends { profileImageUrl: string | null }>(item: T): T {
+    return {
+      ...item,
+      profileImageUrl: this.toPublicProfileImageUrl(item.profileImageUrl),
+    }
+  }
+
+  private normalizeProfileImageUrl<T extends { profileImageUrl?: string | null }>(item: T): T {
+    if (item.profileImageUrl === undefined) {
+      return item
+    }
+
+    return {
+      ...item,
+      profileImageUrl: this.storage.normalizeStorageValue(item.profileImageUrl),
+    }
+  }
+
+  async create(createUserDto: CreateUserDto, identity: { provider: Provider; id: string }) {
     const { favoritePersonalities, favoriteAppearances, ...rest } = createUserDto
+    const normalizedRest = this.normalizeProfileImageUrl(rest)
 
     const data: any = {
-      ...rest,
+      ...normalizedRest,
       // TODO: Stop storing kakao id on User once all clients use UserIdentity.
       ...(identity.provider === "KAKAO" ? { kakaoId: identity.id } : {}),
       UserIdentity: {
@@ -47,9 +71,11 @@ export class UserService {
       }),
     }
 
-    return this.prisma.user.create({
+    const user = await this.prisma.user.create({
       data,
     })
+
+    return this.formatProfileImage(user)
   }
 
   async checkNickname(nickname: string) {
@@ -61,14 +87,16 @@ export class UserService {
     return { available: !nicknameTaken }
   }
 
-  getMe(userId: string) {
-    return this.prisma.user.findUniqueOrThrow({
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       include: {
         favoriteAppearances: true,
         favoritePersonalities: true,
       },
     })
+
+    return this.formatProfileImage(user)
   }
 
   async getOne(userId: string, viewerId: string) {
@@ -93,6 +121,7 @@ export class UserService {
 
     return {
       ...rest,
+      profileImageUrl: this.toPublicProfileImageUrl(rest.profileImageUrl),
       isFollowing: followers.length > 0,
     }
   }
@@ -247,7 +276,7 @@ export class UserService {
     return followers.map((item) => ({
       id: item.follower.id,
       nickname: item.follower.nickname,
-      profileImageUrl: item.follower.profileImageUrl,
+      profileImageUrl: this.toPublicProfileImageUrl(item.follower.profileImageUrl),
       isFollowedByMe: followedSet.has(item.follower.id),
       cursor: item.id,
     }))
@@ -311,7 +340,7 @@ export class UserService {
     return followers.map((item) => ({
       id: item.following.id,
       nickname: item.following.nickname,
-      profileImageUrl: item.following.profileImageUrl,
+      profileImageUrl: this.toPublicProfileImageUrl(item.following.profileImageUrl),
       isFollowedByMe: myId === userId ? true : followedSet.has(item.following.id),
       cursor: item.id,
     }))
@@ -444,18 +473,19 @@ export class UserService {
     return blocks.map((item) => ({
       id: item.blocked.id,
       nickname: item.blocked.nickname,
-      profileImageUrl: item.blocked.profileImageUrl,
+      profileImageUrl: this.toPublicProfileImageUrl(item.blocked.profileImageUrl),
       cursor: item.id,
     }))
   }
 
-  update(userId: string, updateUserDto: UpdateUserDto) {
+  async update(userId: string, updateUserDto: UpdateUserDto) {
     const { favoritePersonalities, favoriteAppearances, ...rest } = updateUserDto
+    const normalizedRest = this.normalizeProfileImageUrl(rest)
 
-    return this.prisma.user.update({
+    const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
-        ...rest,
+        ...normalizedRest,
         ...(favoritePersonalities !== undefined && {
           favoritePersonalities: {
             set: favoritePersonalities.map((id) => ({ id })),
@@ -468,10 +498,14 @@ export class UserService {
         }),
       },
     })
+
+    return this.formatProfileImage(user)
   }
 
-  remove(userId: string) {
-    return this.prisma.user.delete({ where: { id: userId } })
+  async remove(userId: string) {
+    const user = await this.prisma.user.delete({ where: { id: userId } })
+
+    return this.formatProfileImage(user)
   }
 
   async getProfileImageUploadUrl(userId: string, contentType?: string) {

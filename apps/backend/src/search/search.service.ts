@@ -3,10 +3,21 @@ import { PrismaService } from "@app/prisma/prisma.service"
 import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { SearchQueryDto, SearchTypeDto } from "./dto/search-query.dto"
 import { SearchAutocompleteQueryDto } from "./dto/search-autocomplete-query.dto"
+import { StorageService } from "@app/storage/storage.service"
 
 type PostWithViewerState = {
   likes: Array<{ userId: string }>
   bookmarks: Array<{ userId: string }>
+}
+
+type ProfileImageOwner = {
+  profileImageUrl: string | null
+}
+
+type PostWithStorageUrls = {
+  author?: ProfileImageOwner | null
+  cat?: ProfileImageOwner | null
+  images?: Array<{ url: string }>
 }
 
 @Injectable()
@@ -14,7 +25,10 @@ export class SearchService {
   private static readonly DEFAULT_TAKE = 20
   private static readonly AUTOCOMPLETE_TAKE = 5
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   search(viewerId: string, searchQueryDto: SearchQueryDto) {
     const keyword = searchQueryDto.query.trim()
@@ -74,11 +88,54 @@ export class SearchService {
   private attachViewerState<T extends PostWithViewerState>(post: T) {
     const { likes, bookmarks, ...rest } = post
 
-    return {
+    return this.formatPostStorageUrls({
       ...rest,
       isLikedByMe: likes.length > 0,
       isBookmarkedByMe: bookmarks.length > 0,
+    })
+  }
+
+  private toPublicStorageUrl(value: string) {
+    return this.storage.getPublicUrl(value) ?? value
+  }
+
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.toPublicStorageUrl(value) : value
+  }
+
+  private formatProfileImage<T extends ProfileImageOwner | null | undefined>(item: T): T {
+    if (!item) {
+      return item
     }
+
+    return {
+      ...item,
+      profileImageUrl: this.toPublicProfileImageUrl(item.profileImageUrl),
+    }
+  }
+
+  private formatPostStorageUrls<T>(post: T): T {
+    const postWithStorageUrls = post as T & PostWithStorageUrls
+    const formatted = {
+      ...post,
+    } as T & PostWithStorageUrls
+
+    if (postWithStorageUrls.author !== undefined) {
+      formatted.author = this.formatProfileImage(postWithStorageUrls.author)
+    }
+
+    if (postWithStorageUrls.cat !== undefined) {
+      formatted.cat = this.formatProfileImage(postWithStorageUrls.cat)
+    }
+
+    if (postWithStorageUrls.images !== undefined) {
+      formatted.images = postWithStorageUrls.images.map((image) => ({
+        ...image,
+        url: this.toPublicStorageUrl(image.url),
+      }))
+    }
+
+    return formatted
   }
 
   async autocomplete(viewerId: string, searchAutocompleteQueryDto: SearchAutocompleteQueryDto) {
@@ -143,7 +200,7 @@ export class SearchService {
     const sortedUsers = users
       .map((user) => ({
         profileName: user.nickname,
-        profileImageUrl: user.profileImageUrl,
+        profileImageUrl: this.toPublicProfileImageUrl(user.profileImageUrl),
       }))
       .sort((a, b) => this.compareByLengthThenName(a.profileName, b.profileName))
       .slice(0, SearchService.AUTOCOMPLETE_TAKE)
@@ -151,7 +208,7 @@ export class SearchService {
     const sortedCats = cats
       .map((cat) => ({
         profileName: cat.name,
-        profileImageUrl: cat.profileImageUrl,
+        profileImageUrl: this.toPublicProfileImageUrl(cat.profileImageUrl),
       }))
       .sort((a, b) => this.compareByLengthThenName(a.profileName, b.profileName))
       .slice(0, SearchService.AUTOCOMPLETE_TAKE)
@@ -329,8 +386,11 @@ export class SearchService {
 
     return {
       type: SearchTypeDto.PROFILE,
-      users,
-      cats,
+      users: users.map((user) => this.formatProfileImage(user)),
+      cats: cats.map((cat) => ({
+        ...this.formatProfileImage(cat),
+        butler: this.formatProfileImage(cat.butler),
+      })),
     }
   }
 }

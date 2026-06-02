@@ -14,8 +14,11 @@ describe("SearchService", () => {
     },
     getPaginator: jest.fn(),
   }
+  const storage = {
+    getPublicUrl: jest.fn((value: string) => `https://storage.catus.app/catus-media/${value}`),
+  }
 
-  const service = new SearchService(prisma as any)
+  const service = new SearchService(prisma as any, storage as any)
 
   beforeEach(() => {
     jest.clearAllMocks()

@@ -3,13 +3,41 @@ import { PrismaService } from "@app/prisma/prisma.service"
 import { NotificationService } from "@app/notification/notification.service"
 import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { CreateCommentDto } from "./dto/create-comment.dto"
+import { StorageService } from "@app/storage/storage.service"
+
+type ProfileImageOwner = {
+  profileImageUrl: string | null
+}
 
 @Injectable()
 export class CommentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly storage: StorageService,
   ) {}
+
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.storage.getPublicUrl(value) : value
+  }
+
+  private formatProfileImage<T extends ProfileImageOwner>(item: T): T {
+    return {
+      ...item,
+      profileImageUrl: this.toPublicProfileImageUrl(item.profileImageUrl),
+    }
+  }
+
+  private formatCommentAuthor<T extends { author?: ProfileImageOwner }>(comment: T): T {
+    if (!comment.author) {
+      return comment
+    }
+
+    return {
+      ...comment,
+      author: this.formatProfileImage(comment.author),
+    }
+  }
 
   private getVisiblePostWhere(viewerId: string) {
     return {
@@ -115,7 +143,7 @@ export class CommentService {
       })
     }
 
-    return comment
+    return this.formatCommentAuthor(comment)
   }
 
   async getPostComments(postId: string, userId: string, cursor?: string | null, take = 20) {
@@ -191,11 +219,11 @@ export class CommentService {
       if (!replyMap.has(reply.parentId!)) {
         replyMap.set(reply.parentId!, [])
       }
-      replyMap.get(reply.parentId!)!.push(enriched)
+      replyMap.get(reply.parentId!)!.push(this.formatCommentAuthor(enriched))
     }
 
     return parents.map((comment) => ({
-      ...comment,
+      ...this.formatCommentAuthor(comment),
       isLikedByMe: comment.commentLikes.length > 0,
       replies: replyMap.get(comment.id) ?? [],
     }))

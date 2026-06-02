@@ -21,7 +21,7 @@ async function bootstrap() {
     forcePathStyle: true,
   })
 
-  const bucketName = "catus-media"
+  const bucketName = process.env.S3_BUCKET || "catus-media"
 
   try {
     await s3.send(new HeadBucketCommand({ Bucket: bucketName }))

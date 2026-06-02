@@ -32,8 +32,31 @@ export class CatService {
     this.bucket = this.config.get<string>("S3_BUCKET") ?? "catus-media"
   }
 
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.storage.getPublicUrl(value) : value
+  }
+
+  private normalizeProfileImageUrl<T extends { profileImageUrl?: string | null }>(item: T): T {
+    if (item.profileImageUrl === undefined) {
+      return item
+    }
+
+    return {
+      ...item,
+      profileImageUrl: this.storage.normalizeStorageValue(item.profileImageUrl),
+    }
+  }
+
+  private formatProfileImage<T extends { profileImageUrl: string | null }>(item: T): T {
+    return {
+      ...item,
+      profileImageUrl: this.toPublicProfileImageUrl(item.profileImageUrl),
+    }
+  }
+
   private formatCatProfile<
     T extends {
+      profileImageUrl: string | null
       appearances: Array<{ id: number }>
       personalities: Array<{ id: number }>
     },
@@ -42,6 +65,7 @@ export class CatService {
 
     return {
       ...rest,
+      profileImageUrl: this.toPublicProfileImageUrl(cat.profileImageUrl),
       appearances: appearances.map(({ id }) => id),
       personalities: personalities.map(({ id }) => id),
     }
@@ -49,6 +73,7 @@ export class CatService {
 
   private formatCatProfileList<
     T extends {
+      profileImageUrl: string | null
       appearances: Array<{ id: number }>
       personalities: Array<{ id: number }>
     },
@@ -58,10 +83,11 @@ export class CatService {
 
   async create(userId: string, createCatDto: CreateCatDto) {
     const { appearances, personalities, ...rest } = createCatDto
+    const normalizedRest = this.normalizeProfileImageUrl(rest)
 
     const cat = await this.prisma.cat.create({
       data: {
-        ...rest,
+        ...normalizedRest,
         appearances: appearances?.length
           ? { connect: appearances.map((id) => ({ id })) }
           : undefined,
@@ -122,11 +148,12 @@ export class CatService {
     await this.isMyCat(id, userId)
 
     const { appearances, personalities, ...rest } = updateCatDto
+    const normalizedRest = this.normalizeProfileImageUrl(rest)
 
     const cat = await this.prisma.cat.update({
       where: { id },
       data: {
-        ...rest,
+        ...normalizedRest,
         ...(appearances !== undefined && {
           appearances: {
             set: appearances.map((appearanceId) => ({ id: appearanceId })),
@@ -146,7 +173,9 @@ export class CatService {
 
   async delete(id: string, userId: string) {
     await this.isMyCat(id, userId)
-    return this.prisma.cat.delete({ where: { id } })
+    const cat = await this.prisma.cat.delete({ where: { id } })
+
+    return this.formatProfileImage(cat)
   }
 
   private async isMyCat(catId: string, userId: string) {

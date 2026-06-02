@@ -7,7 +7,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUrl,
 } from "class-validator"
 import { Type } from "class-transformer"
 
@@ -42,7 +41,7 @@ export class CreateUserDto {
   @IsOptional()
   phone?: string | null
 
-  @IsUrl()
+  @IsString()
   @IsOptional()
   profileImageUrl?: string | null
 }

@@ -14,6 +14,16 @@ type PostWithViewerState = {
   bookmarks: Array<{ userId: string }>
 }
 
+type ProfileImageOwner = {
+  profileImageUrl: string | null
+}
+
+type PostWithStorageUrls = {
+  author?: ProfileImageOwner | null
+  cat?: ProfileImageOwner | null
+  images?: Array<{ url: string }>
+}
+
 @Injectable()
 export class PostService {
   private static readonly KST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -71,15 +81,58 @@ export class PostService {
   private attachViewerState<T extends PostWithViewerState>(post: T) {
     const { likes, bookmarks, ...rest } = post
 
-    return {
+    return this.formatPostStorageUrls({
       ...rest,
       isLikedByMe: likes.length > 0,
       isBookmarkedByMe: bookmarks.length > 0,
-    }
+    })
   }
 
   private attachViewerStateList<T extends PostWithViewerState>(posts: T[]) {
     return posts.map((post) => this.attachViewerState(post))
+  }
+
+  private toPublicStorageUrl(value: string) {
+    return this.storage.getPublicUrl(value) ?? value
+  }
+
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.toPublicStorageUrl(value) : value
+  }
+
+  private formatProfileImage<T extends ProfileImageOwner | null | undefined>(item: T): T {
+    if (!item) {
+      return item
+    }
+
+    return {
+      ...item,
+      profileImageUrl: this.toPublicProfileImageUrl(item.profileImageUrl),
+    }
+  }
+
+  private formatPostStorageUrls<T>(post: T): T {
+    const postWithStorageUrls = post as T & PostWithStorageUrls
+    const formatted = {
+      ...post,
+    } as T & PostWithStorageUrls
+
+    if (postWithStorageUrls.author !== undefined) {
+      formatted.author = this.formatProfileImage(postWithStorageUrls.author)
+    }
+
+    if (postWithStorageUrls.cat !== undefined) {
+      formatted.cat = this.formatProfileImage(postWithStorageUrls.cat)
+    }
+
+    if (postWithStorageUrls.images !== undefined) {
+      formatted.images = postWithStorageUrls.images.map((image) => ({
+        ...image,
+        url: this.toPublicStorageUrl(image.url),
+      }))
+    }
+
+    return formatted
   }
 
   private getTodayRangeInKst() {
@@ -118,13 +171,11 @@ export class PostService {
       if (imageUrls && imageUrls.length > 0) {
         const images = await Promise.all(
           imageUrls.map(async (tmpUrl, index) => {
-            const prefix = `https://storage.catus.app/catus-media/`
+            const tmpKey = this.storage.getObjectKey(tmpUrl)
 
-            if (!tmpUrl.startsWith(`${prefix}tmp/post/${authorId}/`)) {
+            if (!tmpKey?.startsWith(`tmp/post/${authorId}/`)) {
               throw new BadRequestException("invalid image key")
             }
-
-            const tmpKey = tmpUrl.replace(prefix, "")
 
             const fileName = tmpKey.split("/").pop()
             if (!fileName) {
@@ -709,7 +760,7 @@ export class PostService {
       }),
     ])
 
-    const imageUrls = reportResult.post.images.map((image) => image.url)
+    const imageUrls = reportResult.post.images.map((image) => this.toPublicStorageUrl(image.url))
     const firstImageUrl = imageUrls[0]
 
     await axios.post(this.webhookUrl, {

@@ -146,6 +146,40 @@ export class PostService {
     return { startAt, endAt }
   }
 
+  private async buildPostImages(postId: string, userId: string, imageUrls: string[]) {
+    return Promise.all(
+      imageUrls.map(async (imageUrl, index) => {
+        const objectKey = this.storage.getObjectKey(imageUrl)
+        const postImagePrefix = `posts/${postId}/images/`
+
+        if (objectKey?.startsWith(postImagePrefix)) {
+          return {
+            url: objectKey,
+            order: index + 1,
+          }
+        }
+
+        if (!objectKey?.startsWith(`tmp/post/${userId}/`)) {
+          throw new BadRequestException("invalid image key")
+        }
+
+        const fileName = objectKey.split("/").pop()
+        if (!fileName) {
+          throw new BadRequestException("invalid image key")
+        }
+
+        const destKey = `${postImagePrefix}${fileName}`
+
+        await this.storage.copyObject(this.bucket, objectKey, destKey)
+
+        return {
+          url: destKey,
+          order: index + 1,
+        }
+      }),
+    )
+  }
+
   async create(authorId: string, createPostDto: CreatePostDto) {
     const { catId, content, imageUrls } = createPostDto
 
@@ -169,34 +203,14 @@ export class PostService {
 
     try {
       if (imageUrls && imageUrls.length > 0) {
-        const images = await Promise.all(
-          imageUrls.map(async (tmpUrl, index) => {
-            const tmpKey = this.storage.getObjectKey(tmpUrl)
-
-            if (!tmpKey?.startsWith(`tmp/post/${authorId}/`)) {
-              throw new BadRequestException("invalid image key")
-            }
-
-            const fileName = tmpKey.split("/").pop()
-            if (!fileName) {
-              throw new BadRequestException("invalid image key")
-            }
-
-            const destKey = `posts/${post.id}/images/${fileName}`
-
-            await this.storage.copyObject(this.bucket, tmpKey, destKey)
-
-            return {
-              postId: post.id,
-              url: destKey,
-              order: index + 1,
-            }
-          }),
-        )
+        const images = await this.buildPostImages(post.id, authorId, imageUrls)
 
         if (images.length > 0) {
           await this.prisma.postImage.createMany({
-            data: images,
+            data: images.map((image) => ({
+              ...image,
+              postId: post.id,
+            })),
           })
         }
       }
@@ -493,7 +507,7 @@ export class PostService {
   async update(id: string, userId: string, updatePostDto: UpdatePostDto) {
     await this.assertMyPost(id, userId)
 
-    const { catId, ...rest } = updatePostDto
+    const { catId, imageUrls, ...rest } = updatePostDto
 
     if (catId) {
       await this.prisma.cat.findFirstOrThrow({
@@ -505,11 +519,45 @@ export class PostService {
       })
     }
 
+    let imageUpdate:
+      | {
+          deleteMany: {}
+          createMany?: {
+            data: Array<{ url: string; order: number }>
+          }
+        }
+      | undefined
+
+    if (imageUrls !== undefined) {
+      const images = await this.buildPostImages(id, userId, imageUrls ?? [])
+
+      imageUpdate = {
+        deleteMany: {},
+        ...(images.length > 0 && {
+          createMany: {
+            data: images,
+          },
+        }),
+      }
+    }
+
     const post = await this.prisma.post.update({
       where: { id },
       data: {
         ...rest,
-        ...(catId !== undefined && { catId: catId ?? null }),
+        ...(catId !== undefined && {
+          cat:
+            catId === null
+              ? { disconnect: true }
+              : {
+                  connect: {
+                    id: catId,
+                  },
+                },
+        }),
+        ...(imageUpdate && {
+          images: imageUpdate,
+        }),
       },
       include: this.getPostInclude(userId),
     })

@@ -21,16 +21,31 @@ describe("PostService", () => {
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
     },
+    postImage: {
+      createMany: jest.fn(),
+    },
+  }
+
+  const storage = {
+    getPublicUrl: jest.fn((value: string | null | undefined) => value ?? null),
+    getObjectKey: jest.fn((value: string | null | undefined) => {
+      if (!value) {
+        return null
+      }
+
+      return value.replace("https://storage.catus.app/catus-media/", "")
+    }),
+    copyObject: jest.fn(),
   }
 
   const service = new PostService(
     prisma as any,
-    {} as any,
+    storage as any,
     { get: jest.fn() } as any,
     {} as any,
   )
 
-  const buildPost = (id: string) => ({
+  const buildPost = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
     likeCount: 0,
     content: null,
@@ -47,6 +62,7 @@ describe("PostService", () => {
     images: [],
     likes: [],
     bookmarks: [],
+    ...overrides,
   })
 
   beforeEach(() => {
@@ -175,6 +191,118 @@ describe("PostService", () => {
         butlerId: "author-id",
       },
       select: { id: true },
+    })
+  })
+
+  it("keeps post images unchanged when imageUrls is omitted", async () => {
+    prisma.post.findUnique.mockResolvedValue({ authorId: "author-id" })
+    prisma.post.update.mockResolvedValue(buildPost("post-id"))
+
+    await service.update("post-id", "author-id", { content: "Updated content" })
+
+    const updateArgs = prisma.post.update.mock.calls[0][0]
+    expect(updateArgs.data).not.toHaveProperty("images")
+    expect(storage.getObjectKey).not.toHaveBeenCalled()
+    expect(storage.copyObject).not.toHaveBeenCalled()
+  })
+
+  it("replaces post images when imageUrls is provided", async () => {
+    prisma.post.findUnique.mockResolvedValue({ authorId: "author-id" })
+    prisma.post.update.mockResolvedValue(
+      buildPost("post-id", {
+        images: [
+          {
+            id: "image-id",
+            postId: "post-id",
+            url: "posts/post-id/images/new.webp",
+            order: 1,
+          },
+        ],
+      }),
+    )
+
+    await service.update("post-id", "author-id", {
+      imageUrls: ["https://storage.catus.app/catus-media/tmp/post/author-id/new.webp"],
+    })
+
+    expect(storage.copyObject).toHaveBeenCalledWith(
+      "catus-media",
+      "tmp/post/author-id/new.webp",
+      "posts/post-id/images/new.webp",
+    )
+    expect(prisma.post.update).toHaveBeenCalledWith({
+      where: { id: "post-id" },
+      data: {
+        images: {
+          deleteMany: {},
+          createMany: {
+            data: [
+              {
+                url: "posts/post-id/images/new.webp",
+                order: 1,
+              },
+            ],
+          },
+        },
+      },
+      include: expect.any(Object),
+    })
+  })
+
+  it("clears post images when imageUrls is an empty array", async () => {
+    prisma.post.findUnique.mockResolvedValue({ authorId: "author-id" })
+    prisma.post.update.mockResolvedValue(buildPost("post-id"))
+
+    await service.update("post-id", "author-id", { imageUrls: [] })
+
+    expect(storage.copyObject).not.toHaveBeenCalled()
+    expect(prisma.post.update).toHaveBeenCalledWith({
+      where: { id: "post-id" },
+      data: {
+        images: {
+          deleteMany: {},
+        },
+      },
+      include: expect.any(Object),
+    })
+  })
+
+  it("keeps existing post image urls when they are included in imageUrls", async () => {
+    prisma.post.findUnique.mockResolvedValue({ authorId: "author-id" })
+    prisma.post.update.mockResolvedValue(
+      buildPost("post-id", {
+        images: [
+          {
+            id: "image-id",
+            postId: "post-id",
+            url: "posts/post-id/images/existing.webp",
+            order: 1,
+          },
+        ],
+      }),
+    )
+
+    await service.update("post-id", "author-id", {
+      imageUrls: ["https://storage.catus.app/catus-media/posts/post-id/images/existing.webp"],
+    })
+
+    expect(storage.copyObject).not.toHaveBeenCalled()
+    expect(prisma.post.update).toHaveBeenCalledWith({
+      where: { id: "post-id" },
+      data: {
+        images: {
+          deleteMany: {},
+          createMany: {
+            data: [
+              {
+                url: "posts/post-id/images/existing.webp",
+                order: 1,
+              },
+            ],
+          },
+        },
+      },
+      include: expect.any(Object),
     })
   })
 

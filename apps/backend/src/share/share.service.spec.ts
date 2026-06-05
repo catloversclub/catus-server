@@ -32,7 +32,10 @@ describe("ShareService", () => {
       images: [{ url: "posts/post-id/images/first.webp" }],
     })
 
-    const html = await service.getPostShareHtml("post-id")
+    const html = await service.getPostShareHtml(
+      "post-id",
+      "https://api.catus.app/share/post/post-id",
+    )
 
     expect(prisma.post.findUniqueOrThrow).toHaveBeenCalledWith({
       where: { id: "post-id" },
@@ -75,7 +78,10 @@ describe("ShareService", () => {
       images: [],
     })
 
-    const html = await service.getPostShareHtml("post-id")
+    const html = await service.getPostShareHtml(
+      "post-id",
+      "https://api.catus.app/share/post/post-id",
+    )
 
     expect(html).toContain(
       '<meta property="og:description" content="캣어스에서 게시물을 확인해보세요." />',
@@ -92,7 +98,10 @@ describe("ShareService", () => {
       profileImageUrl: "users/user-id/profile.webp",
     })
 
-    const html = await service.getUserShareHtml("user-id")
+    const html = await service.getUserShareHtml(
+      "user-id",
+      "https://api.catus.app/share/user/user-id",
+    )
 
     expect(prisma.user.findUniqueOrThrow).toHaveBeenCalledWith({
       where: { id: "user-id" },
@@ -121,7 +130,10 @@ describe("ShareService", () => {
       profileImageUrl: `users/user-id/profile"&<.webp`,
     })
 
-    const html = await service.getUserShareHtml("user-id")
+    const html = await service.getUserShareHtml(
+      "user-id",
+      "https://api.catus.app/share/user/user-id",
+    )
 
     expect(html).toContain('@tom&quot;&amp;&lt;cat&gt;')
     expect(html).toContain("profile&quot;&amp;&lt;.webp")

@@ -20,7 +20,6 @@ const HTML_ESCAPE_MAP: Record<string, string> = {
 
 @Injectable()
 export class ShareService {
-  private static readonly SHARE_BASE_URL = "https://api.catus.app"
   private static readonly DEFAULT_POST_DESCRIPTION = "캣어스에서 게시물을 확인해보세요."
 
   constructor(
@@ -28,7 +27,7 @@ export class ShareService {
     private readonly storage: StorageService,
   ) {}
 
-  async getPostShareHtml(id: string) {
+  async getPostShareHtml(id: string, shareUrl: string) {
     const encodedId = encodeURIComponent(id)
     const post = await this.prisma.post.findUniqueOrThrow({
       where: { id },
@@ -54,12 +53,12 @@ export class ShareService {
       title: `@${post.author.nickname}님의 게시물`,
       description: post.content?.trim() || ShareService.DEFAULT_POST_DESCRIPTION,
       imageUrl: this.toPublicUrl(post.images[0]?.url ?? post.author.profileImageUrl),
-      ogUrl: `${ShareService.SHARE_BASE_URL}/share/post/${encodedId}`,
+      ogUrl: shareUrl,
       redirectUrl: `catus://post/${encodedId}`,
     })
   }
 
-  async getUserShareHtml(id: string) {
+  async getUserShareHtml(id: string, shareUrl: string) {
     const encodedId = encodeURIComponent(id)
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id },
@@ -74,7 +73,7 @@ export class ShareService {
       title: `@${user.nickname}`,
       description: `팔로워 ${user.followerCount}명`,
       imageUrl: this.toPublicUrl(user.profileImageUrl),
-      ogUrl: `${ShareService.SHARE_BASE_URL}/share/user/${encodedId}`,
+      ogUrl: shareUrl,
       redirectUrl: `catus://user/${encodedId}`,
     })
   }

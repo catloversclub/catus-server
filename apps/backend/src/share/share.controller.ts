@@ -1,4 +1,5 @@
-import { Controller, Get, Header, Param } from "@nestjs/common"
+import { Controller, Get, Header, Param, Req } from "@nestjs/common"
+import type { Request } from "express"
 import { ShareService } from "./share.service"
 
 @Controller("share")
@@ -7,13 +8,28 @@ export class ShareController {
 
   @Get("post/:id")
   @Header("Content-Type", "text/html")
-  getPostShareHtml(@Param("id") id: string) {
-    return this.shareService.getPostShareHtml(id)
+  getPostShareHtml(@Param("id") id: string, @Req() req: Request) {
+    return this.shareService.getPostShareHtml(id, this.getShareUrl(req))
   }
 
   @Get("user/:id")
   @Header("Content-Type", "text/html")
-  getUserShareHtml(@Param("id") id: string) {
-    return this.shareService.getUserShareHtml(id)
+  getUserShareHtml(@Param("id") id: string, @Req() req: Request) {
+    return this.shareService.getUserShareHtml(id, this.getShareUrl(req))
+  }
+
+  private getShareUrl(req: Request) {
+    const protocol = this.getForwardedValue(req, "x-forwarded-proto") ?? req.protocol
+    const host =
+      this.getForwardedValue(req, "x-forwarded-host") ?? req.get("host") ?? req.hostname
+
+    return `${protocol}://${host}${req.originalUrl}`
+  }
+
+  private getForwardedValue(req: Request, header: string) {
+    return req
+      .get(header)
+      ?.split(",")[0]
+      ?.trim()
   }
 }

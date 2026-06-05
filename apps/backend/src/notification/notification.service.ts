@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common"
 import { PrismaService } from "@app/prisma/prisma.service"
+import { StorageService } from "@app/storage/storage.service"
 import { Prisma, type PushPlatform } from "@prisma/client"
 import Expo, { type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk"
 
@@ -11,7 +12,10 @@ const NOTIFICATION_PREVIEW_MAX_LENGTH = 32
 export class NotificationService {
   private readonly expo = new Expo()
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   registerPushToken(userId: string, token: string, platform: PushPlatform) {
     if (!Expo.isExpoPushToken(token)) {
@@ -116,10 +120,59 @@ export class NotificationService {
       }),
     ])
 
+    const actorIds = [
+      ...new Set(
+        notifications
+          .map((notification) => this.getNotificationActorId(notification.data))
+          .filter((actorId): actorId is string => actorId != null),
+      ),
+    ]
+    const actors = actorIds.length
+      ? await this.prisma.user.findMany({
+          where: {
+            id: {
+              in: actorIds,
+            },
+          },
+          select: {
+            id: true,
+            profileImageUrl: true,
+          },
+        })
+      : []
+    const actorById = new Map(
+      actors.map((actor) => [
+        actor.id,
+        {
+          id: actor.id,
+          imageUrl: this.toPublicProfileImageUrl(actor.profileImageUrl),
+        },
+      ]),
+    )
+
     return notifications.map((notification) => ({
       ...notification,
       readAt: notification.readAt ?? readAt,
+      actor: this.getNotificationActor(notification.data, actorById),
     }))
+  }
+
+  async deleteNotification(userId: string, notificationId: string) {
+    const deleted = await this.prisma.notification.deleteMany({
+      where: {
+        id: notificationId,
+        userId,
+      },
+    })
+
+    if (deleted.count === 0) {
+      throw new NotFoundException("Notification not found")
+    }
+
+    return {
+      id: notificationId,
+      deleted: true,
+    }
   }
 
   async sendPushNotificationToUser(userId: string, message: PushNotificationPayload) {
@@ -412,5 +465,43 @@ export class NotificationService {
 
   private preview(content: string) {
     return content.replace(/\s+/g, " ").trim().slice(0, NOTIFICATION_PREVIEW_MAX_LENGTH)
+  }
+
+  private toPublicProfileImageUrl(value: string | null) {
+    return value ? this.storage.getPublicUrl(value) : value
+  }
+
+  private getNotificationActor(
+    data: Prisma.JsonValue | null,
+    actorById: Map<string, { id: string; imageUrl: string | null }>,
+  ) {
+    const actorId = this.getNotificationActorId(data)
+    if (actorId == null) {
+      return null
+    }
+
+    return actorById.get(actorId) ?? { id: actorId, imageUrl: null }
+  }
+
+  private getNotificationActorId(data: Prisma.JsonValue | null) {
+    if (!this.isJsonObject(data)) {
+      return null
+    }
+
+    const actorId = data.actorId
+    if (typeof actorId === "string") {
+      return actorId
+    }
+
+    const followerId = data.followerId
+    if (typeof followerId === "string") {
+      return followerId
+    }
+
+    return null
+  }
+
+  private isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
   }
 }

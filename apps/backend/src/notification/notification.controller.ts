@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   DefaultValuePipe,
   Get,
   Param,
@@ -37,6 +38,11 @@ export class NotificationController {
     @Query("take", new DefaultValuePipe(20), ParseIntPipe) take?: number,
   ) {
     return this.notificationService.getNotifications(req.user.id!, cursor ?? null, take)
+  }
+
+  @Delete(":id")
+  deleteNotification(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.notificationService.deleteNotification(req.user.id!, id)
   }
 
   @Get("push-token/:token")

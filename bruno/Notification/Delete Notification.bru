@@ -1,0 +1,14 @@
+meta {
+  name: Delete Notification
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/notification/:id
+  auth: inherit
+}
+
+params:path {
+  id:
+}

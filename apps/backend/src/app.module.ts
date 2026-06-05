@@ -12,6 +12,7 @@ import { CommentModule } from "./comment/comment.module"
 import { AttributeModule } from "./attribute/attribute.module"
 import { SearchModule } from "./search/search.module"
 import { NotificationModule } from "./notification/notification.module"
+import { ShareModule } from "./share/share.module"
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { NotificationModule } from "./notification/notification.module"
     AttributeModule,
     SearchModule,
     NotificationModule,
+    ShareModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: PrismaExceptionFilter }],
 })

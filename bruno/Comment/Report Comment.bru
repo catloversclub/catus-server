@@ -1,0 +1,14 @@
+meta {
+  name: Report Comment
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/comment/:id/report
+  auth: inherit
+}
+
+params:path {
+  id:
+}

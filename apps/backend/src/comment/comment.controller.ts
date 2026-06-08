@@ -35,6 +35,11 @@ export class CommentController {
   unlike(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
     return this.commentService.unlikeComment(id, req.user.id!)
   }
+
+  @Post(":id/report")
+  report(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
+    return this.commentService.reportComment(id, req.user.id!)
+  }
 }
 
 @Controller("post/:postId/comment")

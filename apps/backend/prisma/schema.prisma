@@ -31,6 +31,7 @@ model User {
   postLikes             PostLike[]
   postBookmarks         PostBookmark[]
   commentLikes          CommentLike[]
+  commentReports        CommentReport[]
   UserIdentity          UserIdentity[]
   refreshTokens         RefreshToken[]
   Report                Report[]
@@ -175,8 +176,8 @@ model Post {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  authorId String  @map("author_id")
-  author   User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId String @map("author_id")
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
   images    PostImage[]
   postCats  PostCat[]
@@ -227,10 +228,11 @@ model Comment {
   authorId String @map("author_id")
   author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
-  parentId     String?       @map("parent_id")
-  parent       Comment?      @relation("CommentToComment", fields: [parentId], references: [id], onDelete: Cascade)
-  replies      Comment[]     @relation("CommentToComment")
+  parentId     String?         @map("parent_id")
+  parent       Comment?        @relation("CommentToComment", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      Comment[]       @relation("CommentToComment")
   commentLikes CommentLike[]
+  reports      CommentReport[]
 
   @@index([postId, id])
   @@index([parentId, id])
@@ -284,6 +286,17 @@ model Report {
 
   @@id([postId, reporterId])
   @@map("report")
+}
+
+model CommentReport {
+  commentId  String @map("comment_id")
+  reporterId String @map("reporter_id")
+
+  comment  Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reporter User    @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, reporterId])
+  @@map("comment_report")
 }
 
 model PushToken {

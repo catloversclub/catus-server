@@ -4,6 +4,8 @@ import { NotificationService } from "@app/notification/notification.service"
 import { getVisibleUserWhere } from "@app/common/user-block-visibility"
 import { CreateCommentDto } from "./dto/create-comment.dto"
 import { StorageService } from "@app/storage/storage.service"
+import { ConfigService } from "@nestjs/config"
+import axios from "axios"
 
 type ProfileImageOwner = {
   profileImageUrl: string | null
@@ -11,11 +13,17 @@ type ProfileImageOwner = {
 
 @Injectable()
 export class CommentService {
+  private readonly webhookUrl: string
+  private static readonly DISCORD_FIELD_VALUE_MAX_LENGTH = 1024
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
     private readonly storage: StorageService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.webhookUrl = this.config.get<string>("DISCORD_WEBHOOK_URL_REPORT")!
+  }
 
   private toPublicProfileImageUrl(value: string | null) {
     return value ? this.storage.getPublicUrl(value) : value
@@ -66,6 +74,16 @@ export class CommentService {
       author: getVisibleUserWhere(viewerId),
       post: this.getVisiblePostWhere(viewerId),
     }
+  }
+
+  private toDiscordFieldValue(value: string | null | undefined, fallback = "(내용 없음)") {
+    const text = value?.trim() ? value : fallback
+
+    if (text.length <= CommentService.DISCORD_FIELD_VALUE_MAX_LENGTH) {
+      return text
+    }
+
+    return `${text.slice(0, CommentService.DISCORD_FIELD_VALUE_MAX_LENGTH - 3)}...`
   }
 
   async create(postId: string, authorId: string, dto: CreateCommentDto) {
@@ -355,6 +373,96 @@ export class CommentService {
       return {
         likeCount,
       }
+    })
+  }
+
+  async reportComment(id: string, reporterId: string) {
+    const [reportResult, reportCount] = await this.prisma.$transaction([
+      this.prisma.commentReport.create({
+        data: {
+          commentId: id,
+          reporterId,
+        },
+        select: {
+          reporter: {
+            select: {
+              nickname: true,
+            },
+          },
+          comment: {
+            select: {
+              id: true,
+              content: true,
+              author: {
+                select: {
+                  nickname: true,
+                },
+              },
+              post: {
+                select: {
+                  id: true,
+                  content: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.commentReport.count({
+        where: {
+          commentId: id,
+        },
+      }),
+    ])
+
+    await axios.post(this.webhookUrl, {
+      embeds: [
+        {
+          title: "🚨 댓글 신고 접수",
+          color: 0xff3b30,
+          fields: [
+            {
+              name: "댓글 ID",
+              value: `\`${reportResult.comment.id}\``,
+              inline: false,
+            },
+            {
+              name: "게시글 ID",
+              value: `\`${reportResult.comment.post.id}\``,
+              inline: false,
+            },
+            {
+              name: "작성자",
+              value: reportResult.comment.author.nickname,
+              inline: true,
+            },
+            {
+              name: "신고자",
+              value: reportResult.reporter.nickname,
+              inline: true,
+            },
+            {
+              name: "누적 신고 수",
+              value: String(reportCount),
+              inline: true,
+            },
+            {
+              name: "댓글 내용",
+              value: this.toDiscordFieldValue(reportResult.comment.content),
+              inline: false,
+            },
+            {
+              name: "게시글 내용",
+              value: this.toDiscordFieldValue(reportResult.comment.post.content),
+              inline: false,
+            },
+          ],
+          timestamp: new Date().toISOString(),
+          footer: {
+            text: "Comment Report Webhook",
+          },
+        },
+      ],
     })
   }
 }

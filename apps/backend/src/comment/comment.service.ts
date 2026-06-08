@@ -230,16 +230,13 @@ export class CommentService {
   }
 
   async delete(id: string, userId: string) {
-    const comment = await this.prisma.comment.findUnique({
-      where: { id },
-      select: { authorId: true },
+    const result = await this.prisma.comment.deleteMany({
+      where: { id, authorId: userId },
     })
 
-    if (!comment || comment.authorId !== userId) {
+    if (result.count === 0) {
       throw new ForbiddenException("This is not your comment")
     }
-
-    await this.prisma.comment.delete({ where: { id } })
   }
 
   async likeComment(commentId: string, userId: string) {

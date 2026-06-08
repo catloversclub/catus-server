@@ -3,6 +3,7 @@ jest.mock("@app/notification/notification.service", () => ({
 }))
 
 import { CommentService } from "./comment.service"
+import { ForbiddenException } from "@nestjs/common"
 
 describe("CommentService", () => {
   const prisma = {
@@ -10,6 +11,7 @@ describe("CommentService", () => {
       findFirstOrThrow: jest.fn(),
     },
     comment: {
+      deleteMany: jest.fn(),
       findMany: jest.fn(),
     },
     getPaginator: jest.fn(),
@@ -118,6 +120,34 @@ describe("CommentService", () => {
       },
       orderBy: { id: "asc" },
       include: expect.any(Object),
+    })
+  })
+
+  it("deletes a comment only when the requester is the author", async () => {
+    prisma.comment.deleteMany.mockResolvedValueOnce({ count: 1 })
+
+    await service.delete("comment-id", "author-id")
+
+    expect(prisma.comment.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: "comment-id",
+        authorId: "author-id",
+      },
+    })
+  })
+
+  it("rejects deleting another user's comment", async () => {
+    prisma.comment.deleteMany.mockResolvedValueOnce({ count: 0 })
+
+    await expect(service.delete("comment-id", "requester-id")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    )
+
+    expect(prisma.comment.deleteMany).toHaveBeenCalledWith({
+      where: {
+        id: "comment-id",
+        authorId: "requester-id",
+      },
     })
   })
 })

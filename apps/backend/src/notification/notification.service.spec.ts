@@ -19,10 +19,20 @@ jest.mock("expo-server-sdk", () => {
 
 describe("NotificationService", () => {
   const prisma = {
-    notification: {
+    notificationSetting: {
       findMany: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
+    notification: {
+      createMany: jest.fn(),
+      findMany: jest.fn(),
+      groupBy: jest.fn(),
       updateMany: jest.fn(),
       deleteMany: jest.fn(),
+    },
+    pushToken: {
+      findMany: jest.fn(),
     },
     user: {
       findMany: jest.fn(),
@@ -38,7 +48,12 @@ describe("NotificationService", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     prisma.getPaginator.mockReturnValue({})
+    prisma.notificationSetting.findMany.mockResolvedValue([])
+    prisma.notificationSetting.findUnique.mockResolvedValue(null)
+    prisma.notification.createMany.mockResolvedValue({ count: 0 })
+    prisma.notification.groupBy.mockResolvedValue([])
     prisma.notification.updateMany.mockResolvedValue({ count: 0 })
+    prisma.pushToken.findMany.mockResolvedValue([])
   })
 
   it("adds actor imageUrl when notifications contain actorId or followerId", async () => {
@@ -152,5 +167,157 @@ describe("NotificationService", () => {
     await expect(
       service.deleteNotification("recipient-id", "notification-id"),
     ).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  it("returns default notification settings when settings do not exist yet", async () => {
+    await expect(service.getNotificationSettings("recipient-id")).resolves.toEqual({
+      allEnabled: true,
+      postLikeEnabled: true,
+      commentEnabled: true,
+      replyEnabled: true,
+      followEnabled: true,
+      marketingEnabled: true,
+    })
+
+    expect(prisma.notificationSetting.findUnique).toHaveBeenCalledWith({
+      where: {
+        userId: "recipient-id",
+      },
+      select: {
+        allEnabled: true,
+        postLikeEnabled: true,
+        commentEnabled: true,
+        replyEnabled: true,
+        followEnabled: true,
+        marketingEnabled: true,
+      },
+    })
+  })
+
+  it("updates notification settings partially", async () => {
+    prisma.notificationSetting.upsert.mockResolvedValue({
+      allEnabled: true,
+      postLikeEnabled: false,
+      commentEnabled: true,
+      replyEnabled: true,
+      followEnabled: true,
+      marketingEnabled: false,
+    })
+
+    await expect(
+      service.updateNotificationSettings("recipient-id", {
+        postLikeEnabled: false,
+        marketingEnabled: false,
+      }),
+    ).resolves.toEqual({
+      allEnabled: true,
+      postLikeEnabled: false,
+      commentEnabled: true,
+      replyEnabled: true,
+      followEnabled: true,
+      marketingEnabled: false,
+    })
+
+    expect(prisma.notificationSetting.upsert).toHaveBeenCalledWith({
+      where: {
+        userId: "recipient-id",
+      },
+      update: {
+        postLikeEnabled: false,
+        marketingEnabled: false,
+      },
+      create: {
+        userId: "recipient-id",
+        postLikeEnabled: false,
+        marketingEnabled: false,
+      },
+      select: {
+        allEnabled: true,
+        postLikeEnabled: true,
+        commentEnabled: true,
+        replyEnabled: true,
+        followEnabled: true,
+        marketingEnabled: true,
+      },
+    })
+  })
+
+  it("does not create or push notifications disabled by user settings", async () => {
+    prisma.notificationSetting.findMany.mockResolvedValue([
+      {
+        userId: "like-disabled-id",
+        allEnabled: true,
+        postLikeEnabled: false,
+        commentEnabled: true,
+        replyEnabled: true,
+        followEnabled: true,
+        marketingEnabled: true,
+      },
+      {
+        userId: "all-disabled-id",
+        allEnabled: false,
+        postLikeEnabled: true,
+        commentEnabled: true,
+        replyEnabled: true,
+        followEnabled: true,
+        marketingEnabled: true,
+      },
+    ])
+    prisma.pushToken.findMany.mockResolvedValue([
+      {
+        userId: "default-enabled-id",
+        token: "ExponentPushToken[default-enabled]",
+      },
+    ])
+    prisma.notification.groupBy.mockResolvedValue([
+      {
+        userId: "default-enabled-id",
+        _count: {
+          _all: 3,
+        },
+      },
+    ])
+
+    await expect(
+      service.sendPushNotificationToUsers(
+        ["default-enabled-id", "like-disabled-id", "all-disabled-id"],
+        {
+          title: "actor",
+          body: "회원님의 게시물을 좋아합니다",
+          data: {
+            type: "POST_LIKE",
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      notificationCount: 1,
+      tokenCount: 1,
+      validTokenCount: 1,
+    })
+
+    expect(prisma.notification.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: "default-enabled-id",
+          title: "actor",
+          body: "회원님의 게시물을 좋아합니다",
+          data: {
+            type: "POST_LIKE",
+          },
+        },
+      ],
+    })
+    expect(prisma.pushToken.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: {
+          in: ["default-enabled-id"],
+        },
+        enabled: true,
+      },
+      select: {
+        userId: true,
+        token: true,
+      },
+    })
   })
 })

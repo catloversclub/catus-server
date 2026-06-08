@@ -15,6 +15,7 @@ import {
 import { JwtAuthGuard } from "@app/auth/guards/jwt-auth.guard"
 import type { AuthenticatedRequest } from "@app/auth/authenticated-request.interface"
 import { RegisterPushTokenDto } from "./dto/register-push-token.dto"
+import { UpdateNotificationSettingsDto } from "./dto/update-notification-settings.dto"
 import { UpdatePushTokenDto } from "./dto/update-push-token.dto"
 import { NotificationService } from "./notification.service"
 
@@ -38,6 +39,19 @@ export class NotificationController {
     @Query("take", new DefaultValuePipe(20), ParseIntPipe) take?: number,
   ) {
     return this.notificationService.getNotifications(req.user.id!, cursor ?? null, take)
+  }
+
+  @Get("settings")
+  getNotificationSettings(@Req() req: AuthenticatedRequest) {
+    return this.notificationService.getNotificationSettings(req.user.id!)
+  }
+
+  @Patch("settings")
+  updateNotificationSettings(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: UpdateNotificationSettingsDto,
+  ) {
+    return this.notificationService.updateNotificationSettings(req.user.id!, dto)
   }
 
   @Delete(":id")

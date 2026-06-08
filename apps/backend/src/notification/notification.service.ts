@@ -3,10 +3,38 @@ import { PrismaService } from "@app/prisma/prisma.service"
 import { StorageService } from "@app/storage/storage.service"
 import { Prisma, type PushPlatform } from "@prisma/client"
 import Expo, { type ExpoPushMessage, type ExpoPushTicket } from "expo-server-sdk"
+import type { UpdateNotificationSettingsDto } from "./dto/update-notification-settings.dto"
 
 type PushNotificationPayload = Omit<ExpoPushMessage, "to" | "badge">
 
 const NOTIFICATION_PREVIEW_MAX_LENGTH = 32
+const NOTIFICATION_SETTINGS_SELECT = {
+  allEnabled: true,
+  postLikeEnabled: true,
+  commentEnabled: true,
+  replyEnabled: true,
+  followEnabled: true,
+  marketingEnabled: true,
+} as const
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  allEnabled: true,
+  postLikeEnabled: true,
+  commentEnabled: true,
+  replyEnabled: true,
+  followEnabled: true,
+  marketingEnabled: true,
+}
+type NotificationSettings = typeof DEFAULT_NOTIFICATION_SETTINGS
+type NotificationSettingKey = Exclude<keyof NotificationSettings, "allEnabled">
+const NOTIFICATION_TYPE_SETTING_KEYS: Record<string, NotificationSettingKey> = {
+  POST_LIKE: "postLikeEnabled",
+  COMMENT_CREATED: "commentEnabled",
+  REPLY_CREATED: "replyEnabled",
+  USER_FOLLOWED: "followEnabled",
+  CAT_FOLLOWED: "followEnabled",
+  FOLLOWED_CAT_POST_CREATED: "followEnabled",
+  NOTICE: "marketingEnabled",
+}
 
 @Injectable()
 export class NotificationService {
@@ -86,6 +114,31 @@ export class NotificationService {
       token,
       enabled,
     }
+  }
+
+  async getNotificationSettings(userId: string) {
+    const settings = await this.prisma.notificationSetting.findUnique({
+      where: {
+        userId,
+      },
+      select: NOTIFICATION_SETTINGS_SELECT,
+    })
+
+    return settings ?? DEFAULT_NOTIFICATION_SETTINGS
+  }
+
+  updateNotificationSettings(userId: string, dto: UpdateNotificationSettingsDto) {
+    return this.prisma.notificationSetting.upsert({
+      where: {
+        userId,
+      },
+      update: dto,
+      create: {
+        userId,
+        ...dto,
+      },
+      select: NOTIFICATION_SETTINGS_SELECT,
+    })
   }
 
   async getNotifications(userId: string, cursor?: string | null, take = 20) {
@@ -335,8 +388,11 @@ export class NotificationService {
 
   async sendPushNotificationToUsers(userIds: string[], message: PushNotificationPayload) {
     const normalizedUserIds = [...new Set(userIds.filter(Boolean))]
+    const enabledUserIds = normalizedUserIds.length
+      ? await this.getNotificationEnabledUserIds(normalizedUserIds, message)
+      : []
 
-    if (normalizedUserIds.length === 0) {
+    if (enabledUserIds.length === 0) {
       return {
         notificationCount: 0,
         tokenCount: 0,
@@ -350,7 +406,7 @@ export class NotificationService {
       : undefined
 
     await this.prisma.notification.createMany({
-      data: normalizedUserIds.map((userId) => ({
+      data: enabledUserIds.map((userId) => ({
         userId,
         title: message.title ?? null,
         body: message.body ?? null,
@@ -362,7 +418,7 @@ export class NotificationService {
       this.prisma.pushToken.findMany({
         where: {
           userId: {
-            in: normalizedUserIds,
+            in: enabledUserIds,
           },
           enabled: true,
         },
@@ -375,7 +431,7 @@ export class NotificationService {
         by: ["userId"],
         where: {
           userId: {
-            in: normalizedUserIds,
+            in: enabledUserIds,
           },
           readAt: null,
         },
@@ -407,7 +463,7 @@ export class NotificationService {
     const tickets = await this.sendExpoMessages(messages)
 
     return {
-      notificationCount: normalizedUserIds.length,
+      notificationCount: enabledUserIds.length,
       tokenCount: pushTokens.length,
       validTokenCount: messages.length,
       tickets,
@@ -463,6 +519,49 @@ export class NotificationService {
     return tickets
   }
 
+  private async getNotificationEnabledUserIds(
+    userIds: string[],
+    message: PushNotificationPayload,
+  ) {
+    const settingKey = this.getNotificationSettingKey(message.data)
+    const settings = await this.prisma.notificationSetting.findMany({
+      where: {
+        userId: {
+          in: userIds,
+        },
+      },
+      select: {
+        userId: true,
+        ...NOTIFICATION_SETTINGS_SELECT,
+      },
+    })
+    const settingsByUserId = new Map(
+      settings.map(({ userId, ...userSettings }) => [userId, userSettings]),
+    )
+
+    return userIds.filter((userId) => {
+      const userSettings = settingsByUserId.get(userId) ?? DEFAULT_NOTIFICATION_SETTINGS
+      if (!userSettings.allEnabled) {
+        return false
+      }
+
+      return settingKey == null || userSettings[settingKey]
+    })
+  }
+
+  private getNotificationSettingKey(data: unknown) {
+    if (!this.isRecord(data)) {
+      return null
+    }
+
+    const type = data.type
+    if (typeof type !== "string") {
+      return null
+    }
+
+    return NOTIFICATION_TYPE_SETTING_KEYS[type] ?? null
+  }
+
   private preview(content: string) {
     return content.replace(/\s+/g, " ").trim().slice(0, NOTIFICATION_PREVIEW_MAX_LENGTH)
   }
@@ -499,6 +598,10 @@ export class NotificationService {
     }
 
     return null
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
   }
 
   private isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {

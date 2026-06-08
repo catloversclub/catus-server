@@ -1,0 +1,26 @@
+meta {
+  name: Update Notification Settings
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/notification/settings
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "allEnabled": true,
+    "postLikeEnabled": true,
+    "commentEnabled": true,
+    "replyEnabled": true,
+    "followEnabled": true,
+    "marketingEnabled": false
+  }
+}

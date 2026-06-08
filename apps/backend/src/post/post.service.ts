@@ -20,7 +20,8 @@ type ProfileImageOwner = {
 
 type PostWithStorageUrls = {
   author?: ProfileImageOwner | null
-  cat?: ProfileImageOwner | null
+  cats?: ProfileImageOwner[]
+  postCats?: Array<{ cat: ProfileImageOwner }>
   images?: Array<{ url: string }>
 }
 
@@ -42,7 +43,10 @@ export class PostService {
 
   private getPostInclude(viewerId: string) {
     return {
-      cat: true,
+      postCats: {
+        orderBy: { order: "asc" },
+        include: { cat: true },
+      },
       author: {
         select: {
           id: true,
@@ -63,15 +67,21 @@ export class PostService {
   }
 
   private getVisiblePostWhere(viewerId: string) {
+    const visibleUserWhere = getVisibleUserWhere(viewerId)
+
     return {
-      author: getVisibleUserWhere(viewerId),
+      author: visibleUserWhere,
       OR: [
         {
-          catId: null,
+          postCats: { none: {} },
         },
         {
-          cat: {
-            butler: getVisibleUserWhere(viewerId),
+          postCats: {
+            some: {
+              cat: {
+                butler: visibleUserWhere,
+              },
+            },
           },
         },
       ],
@@ -100,6 +110,41 @@ export class PostService {
     return value ? this.toPublicStorageUrl(value) : value
   }
 
+  private getUniqueCatIds(catIds: string[]) {
+    return [...new Set(catIds.map((catId) => catId.trim()).filter(Boolean))]
+  }
+
+  private getRequestedCatIds(dto: Pick<CreatePostDto, "catIds">) {
+    return dto.catIds === undefined ? undefined : this.getUniqueCatIds(dto.catIds ?? [])
+  }
+
+  private buildPostCatRows(catIds: string[]) {
+    return catIds.map((catId, index) => ({
+      catId,
+      order: index + 1,
+    }))
+  }
+
+  private async assertMyCats(userId: string, catIds: string[]) {
+    if (catIds.length === 0) {
+      return
+    }
+
+    const cats = await this.prisma.cat.findMany({
+      where: {
+        id: {
+          in: catIds,
+        },
+        butlerId: userId,
+      },
+      select: { id: true },
+    })
+
+    if (cats.length !== catIds.length) {
+      throw new BadRequestException("catIds must belong to the author")
+    }
+  }
+
   private formatProfileImage<T extends ProfileImageOwner | null | undefined>(item: T): T {
     if (!item) {
       return item
@@ -115,14 +160,21 @@ export class PostService {
     const postWithStorageUrls = post as T & PostWithStorageUrls
     const formatted = {
       ...post,
-    } as T & PostWithStorageUrls
+    } as T & PostWithStorageUrls & { postCats?: Array<{ cat: ProfileImageOwner }> }
 
     if (postWithStorageUrls.author !== undefined) {
       formatted.author = this.formatProfileImage(postWithStorageUrls.author)
     }
 
-    if (postWithStorageUrls.cat !== undefined) {
-      formatted.cat = this.formatProfileImage(postWithStorageUrls.cat)
+    if (postWithStorageUrls.cats !== undefined) {
+      formatted.cats = postWithStorageUrls.cats.map((cat) => this.formatProfileImage(cat))
+    }
+
+    if (postWithStorageUrls.postCats !== undefined) {
+      formatted.cats = postWithStorageUrls.postCats.map((postCat) =>
+        this.formatProfileImage(postCat.cat),
+      )
+      delete formatted.postCats
     }
 
     if (postWithStorageUrls.images !== undefined) {
@@ -181,23 +233,24 @@ export class PostService {
   }
 
   async create(authorId: string, createPostDto: CreatePostDto) {
-    const { catId, content, imageUrls } = createPostDto
+    const { content, imageUrls, isShareable, isCommentable } = createPostDto
+    const catIds = this.getRequestedCatIds(createPostDto) ?? []
 
-    if (catId) {
-      await this.prisma.cat.findFirstOrThrow({
-        where: {
-          id: catId,
-          butlerId: authorId,
-        },
-        select: { id: true },
-      })
-    }
+    await this.assertMyCats(authorId, catIds)
 
     const post = await this.prisma.post.create({
       data: {
         content: content ?? null,
         authorId,
-        catId: catId ?? null,
+        isShareable: isShareable ?? true,
+        isCommentable: isCommentable ?? true,
+        ...(catIds.length > 0 && {
+          postCats: {
+            createMany: {
+              data: this.buildPostCatRows(catIds),
+            },
+          },
+        }),
       },
     })
 
@@ -315,8 +368,16 @@ export class PostService {
       ...pagination,
       take,
       where: {
-        catId,
-        ...this.getVisiblePostWhere(viewerId),
+        AND: [
+          this.getVisiblePostWhere(viewerId),
+          {
+            postCats: {
+              some: {
+                catId,
+              },
+            },
+          },
+        ],
       },
       orderBy: { id: "desc" },
       include: this.getPostInclude(viewerId),
@@ -338,30 +399,39 @@ export class PostService {
 
     const favoriteAppearanceIds = user.favoriteAppearances.map((a) => a.id)
     const favoritePersonalityIds = user.favoritePersonalities.map((p) => p.id)
+    const favoriteCatWhere = {
+      OR: [
+        {
+          appearances: {
+            some: {
+              id: { in: favoriteAppearanceIds },
+            },
+          },
+        },
+        {
+          personalities: {
+            some: {
+              id: { in: favoritePersonalityIds },
+            },
+          },
+        },
+      ],
+    }
 
     const posts = await this.prisma.post.findMany({
       ...pagination,
       take,
       where: {
-        ...this.getVisiblePostWhere(userId),
-        cat: {
-          OR: [
-            {
-              appearances: {
-                some: {
-                  id: { in: favoriteAppearanceIds },
-                },
+        AND: [
+          this.getVisiblePostWhere(userId),
+          {
+            postCats: {
+              some: {
+                cat: favoriteCatWhere,
               },
             },
-            {
-              personalities: {
-                some: {
-                  id: { in: favoritePersonalityIds },
-                },
-              },
-            },
-          ],
-        },
+          },
+        ],
       },
       orderBy: { id: "desc" },
       include: this.getPostInclude(userId),
@@ -385,11 +455,15 @@ export class PostService {
             },
           },
         },
-        cat: {
-          followedBy: {
-            some: {
-              follow: {
-                followerId: userId,
+        postCats: {
+          some: {
+            cat: {
+              followedBy: {
+                some: {
+                  follow: {
+                    followerId: userId,
+                  },
+                },
               },
             },
           },
@@ -507,16 +581,11 @@ export class PostService {
   async update(id: string, userId: string, updatePostDto: UpdatePostDto) {
     await this.assertMyPost(id, userId)
 
-    const { catId, imageUrls, ...rest } = updatePostDto
+    const { content, imageUrls, isShareable, isCommentable } = updatePostDto
+    const catIds = this.getRequestedCatIds(updatePostDto)
 
-    if (catId) {
-      await this.prisma.cat.findFirstOrThrow({
-        where: {
-          id: catId,
-          butlerId: userId,
-        },
-        select: { id: true },
-      })
+    if (catIds !== undefined) {
+      await this.assertMyCats(userId, catIds)
     }
 
     let imageUpdate:
@@ -541,24 +610,38 @@ export class PostService {
       }
     }
 
+    const data: any = {}
+
+    if (content !== undefined) {
+      data.content = content
+    }
+
+    if (isShareable !== undefined && isShareable !== null) {
+      data.isShareable = isShareable
+    }
+
+    if (isCommentable !== undefined && isCommentable !== null) {
+      data.isCommentable = isCommentable
+    }
+
+    if (catIds !== undefined) {
+      data.postCats = {
+        deleteMany: {},
+        ...(catIds.length > 0 && {
+          createMany: {
+            data: this.buildPostCatRows(catIds),
+          },
+        }),
+      }
+    }
+
+    if (imageUpdate) {
+      data.images = imageUpdate
+    }
+
     const post = await this.prisma.post.update({
       where: { id },
-      data: {
-        ...rest,
-        ...(catId !== undefined && {
-          cat:
-            catId === null
-              ? { disconnect: true }
-              : {
-                  connect: {
-                    id: catId,
-                  },
-                },
-        }),
-        ...(imageUpdate && {
-          images: imageUpdate,
-        }),
-      },
+      data,
       include: this.getPostInclude(userId),
     })
 

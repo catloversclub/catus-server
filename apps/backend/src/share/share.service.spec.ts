@@ -1,4 +1,5 @@
 import { ShareService } from "./share.service"
+import { NotFoundException } from "@nestjs/common"
 
 describe("ShareService", () => {
   const prisma = {
@@ -41,6 +42,7 @@ describe("ShareService", () => {
       where: { id: "post-id" },
       select: {
         content: true,
+        isShareable: true,
         author: {
           select: {
             nickname: true,
@@ -66,6 +68,22 @@ describe("ShareService", () => {
     )
     expect(html).toContain('<meta http-equiv="refresh" content="0;url=catus://post/post-id" />')
     expect(html).toContain('<script>window.location.href = "catus://post/post-id"</script>')
+  })
+
+  it("does not build post share HTML when sharing is disabled", async () => {
+    prisma.post.findUniqueOrThrow.mockResolvedValue({
+      content: "고양이 낮잠",
+      isShareable: false,
+      author: {
+        nickname: "nabi",
+        profileImageUrl: "users/author/profile.webp",
+      },
+      images: [],
+    })
+
+    await expect(
+      service.getPostShareHtml("post-id", "https://api.catus.app/share/post/post-id"),
+    ).rejects.toBeInstanceOf(NotFoundException)
   })
 
   it("falls back to default post description and author profile image", async () => {

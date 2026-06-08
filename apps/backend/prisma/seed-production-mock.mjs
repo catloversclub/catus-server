@@ -354,7 +354,7 @@ function buildPosts(users, cats) {
     return {
       id: uuidV7FromDate(createdAt, `post:${index}`),
       authorId: author.id,
-      catId: cat?.id ?? null,
+      catIds: cat ? [cat.id] : [],
       content: template.replaceAll("{cat}", cat?.name ?? "우리 고양이"),
       createdAt,
     }
@@ -734,17 +734,36 @@ async function seedPosts(posts) {
       where: { id: post.id },
       update: {
         authorId: post.authorId,
-        catId: post.catId,
         content: post.content,
         createdAt: post.createdAt,
+        postCats: {
+          deleteMany: {},
+          ...(post.catIds.length > 0 && {
+            createMany: {
+              data: post.catIds.map((catId, index) => ({
+                catId,
+                order: index + 1,
+              })),
+            },
+          }),
+        },
       },
       create: {
         id: post.id,
         authorId: post.authorId,
-        catId: post.catId,
         content: post.content,
         likeCount: 0,
         createdAt: post.createdAt,
+        ...(post.catIds.length > 0 && {
+          postCats: {
+            createMany: {
+              data: post.catIds.map((catId, index) => ({
+                catId,
+                order: index + 1,
+              })),
+            },
+          },
+        }),
       },
     })
   }

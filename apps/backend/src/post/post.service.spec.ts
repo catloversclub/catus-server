@@ -10,6 +10,7 @@ describe("PostService", () => {
     getPaginator: jest.fn(),
     cat: {
       findFirstOrThrow: jest.fn(),
+      findMany: jest.fn(),
     },
     postLike: {
       groupBy: jest.fn(),
@@ -45,15 +46,47 @@ describe("PostService", () => {
     {} as any,
   )
 
+  const visibleUserWhere = (viewerId: string) => ({
+    blocking: {
+      none: {
+        blockedId: viewerId,
+      },
+    },
+    blockedBy: {
+      none: {
+        blockerId: viewerId,
+      },
+    },
+  })
+
+  const visiblePostWhere = (viewerId: string) => ({
+    author: visibleUserWhere(viewerId),
+    OR: [
+      {
+        postCats: { none: {} },
+      },
+      {
+        postCats: {
+          some: {
+            cat: {
+              butler: visibleUserWhere(viewerId),
+            },
+          },
+        },
+      },
+    ],
+  })
+
   const buildPost = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
     likeCount: 0,
     content: null,
+    isShareable: true,
+    isCommentable: true,
     createdAt: new Date("2026-05-28T00:00:00.000Z"),
     updatedAt: new Date("2026-05-28T00:00:00.000Z"),
     authorId: "author-id",
-    catId: null,
-    cat: null,
+    postCats: [],
     author: {
       id: "author-id",
       nickname: "author",
@@ -92,41 +125,7 @@ describe("PostService", () => {
           gte: new Date("2026-05-27T15:00:00.000Z"),
           lt: new Date("2026-05-28T15:00:00.000Z"),
         },
-        post: {
-          author: {
-            blocking: {
-              none: {
-                blockedId: "viewer-id",
-              },
-            },
-            blockedBy: {
-              none: {
-                blockerId: "viewer-id",
-              },
-            },
-          },
-          OR: [
-            {
-              catId: null,
-            },
-            {
-              cat: {
-                butler: {
-                  blocking: {
-                    none: {
-                      blockedId: "viewer-id",
-                    },
-                  },
-                  blockedBy: {
-                    none: {
-                      blockerId: "viewer-id",
-                    },
-                  },
-                },
-              },
-            },
-          ],
-        },
+        post: visiblePostWhere("viewer-id"),
       },
       _count: {
         postId: true,
@@ -162,35 +161,74 @@ describe("PostService", () => {
     expect(prisma.postLike.groupBy).not.toHaveBeenCalled()
   })
 
-  it("only allows creating a post with the author's own cat", async () => {
-    prisma.cat.findFirstOrThrow.mockResolvedValue({ id: "cat-id" })
+  it("only allows creating a post with the author's own cats", async () => {
+    prisma.cat.findMany.mockResolvedValue([{ id: "cat-a" }, { id: "cat-b" }])
     prisma.post.create.mockResolvedValue({ id: "post-id" })
     prisma.post.findUniqueOrThrow.mockResolvedValue(buildPost("post-id"))
 
-    await service.create("author-id", { catId: "cat-id" })
+    await service.create("author-id", {
+      catIds: ["cat-a", "cat-a", "cat-b"],
+      isShareable: false,
+      isCommentable: false,
+    })
 
-    expect(prisma.cat.findFirstOrThrow).toHaveBeenCalledWith({
+    expect(prisma.cat.findMany).toHaveBeenCalledWith({
       where: {
-        id: "cat-id",
+        id: {
+          in: ["cat-a", "cat-b"],
+        },
         butlerId: "author-id",
       },
       select: { id: true },
     })
+    expect(prisma.post.create).toHaveBeenCalledWith({
+      data: {
+        content: null,
+        authorId: "author-id",
+        isShareable: false,
+        isCommentable: false,
+        postCats: {
+          createMany: {
+            data: [
+              { catId: "cat-a", order: 1 },
+              { catId: "cat-b", order: 2 },
+            ],
+          },
+        },
+      },
+    })
   })
 
-  it("only allows updating a post to the author's own cat", async () => {
+  it("only allows updating a post to the author's own cats", async () => {
     prisma.post.findUnique.mockResolvedValue({ authorId: "author-id" })
-    prisma.cat.findFirstOrThrow.mockResolvedValue({ id: "cat-id" })
+    prisma.cat.findMany.mockResolvedValue([{ id: "cat-a" }, { id: "cat-b" }])
     prisma.post.update.mockResolvedValue(buildPost("post-id"))
 
-    await service.update("post-id", "author-id", { catId: "cat-id" })
+    await service.update("post-id", "author-id", { catIds: ["cat-a", "cat-b"] })
 
-    expect(prisma.cat.findFirstOrThrow).toHaveBeenCalledWith({
+    expect(prisma.cat.findMany).toHaveBeenCalledWith({
       where: {
-        id: "cat-id",
+        id: {
+          in: ["cat-a", "cat-b"],
+        },
         butlerId: "author-id",
       },
       select: { id: true },
+    })
+    expect(prisma.post.update).toHaveBeenCalledWith({
+      where: { id: "post-id" },
+      data: {
+        postCats: {
+          deleteMany: {},
+          createMany: {
+            data: [
+              { catId: "cat-a", order: 1 },
+              { catId: "cat-b", order: 2 },
+            ],
+          },
+        },
+      },
+      include: expect.any(Object),
     })
   })
 
@@ -315,27 +353,22 @@ describe("PostService", () => {
       take: 20,
       where: {
         author: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
+          ...visibleUserWhere("viewer-id"),
           followers: {
             some: {
               followerId: "viewer-id",
             },
           },
         },
-        cat: {
-          followedBy: {
-            some: {
-              follow: {
-                followerId: "viewer-id",
+        postCats: {
+          some: {
+            cat: {
+              followedBy: {
+                some: {
+                  follow: {
+                    followerId: "viewer-id",
+                  },
+                },
               },
             },
           },

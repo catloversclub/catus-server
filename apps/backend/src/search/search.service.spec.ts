@@ -20,6 +20,37 @@ describe("SearchService", () => {
 
   const service = new SearchService(prisma as any, storage as any)
 
+  const visibleUserWhere = (viewerId: string) => ({
+    blocking: {
+      none: {
+        blockedId: viewerId,
+      },
+    },
+    blockedBy: {
+      none: {
+        blockerId: viewerId,
+      },
+    },
+  })
+
+  const visiblePostWhere = (viewerId: string) => ({
+    author: visibleUserWhere(viewerId),
+    OR: [
+      {
+        postCats: { none: {} },
+      },
+      {
+        postCats: {
+          some: {
+            cat: {
+              butler: visibleUserWhere(viewerId),
+            },
+          },
+        },
+      },
+    ],
+  })
+
   beforeEach(() => {
     jest.clearAllMocks()
     prisma.getPaginator.mockReturnValue({})
@@ -36,39 +67,7 @@ describe("SearchService", () => {
     expect(prisma.post.findMany).toHaveBeenCalledWith({
       take: 20,
       where: {
-        author: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
-        },
-        OR: [
-          {
-            catId: null,
-          },
-          {
-            cat: {
-              butler: {
-                blocking: {
-                  none: {
-                    blockedId: "viewer-id",
-                  },
-                },
-                blockedBy: {
-                  none: {
-                    blockerId: "viewer-id",
-                  },
-                },
-              },
-            },
-          },
-        ],
+        ...visiblePostWhere("viewer-id"),
         content: {
           startsWith: "cat",
           mode: "insensitive",
@@ -91,16 +90,7 @@ describe("SearchService", () => {
     expect(prisma.user.findMany).toHaveBeenCalledWith({
       take: 20,
       where: {
-        blocking: {
-          none: {
-            blockedId: "viewer-id",
-          },
-        },
-        blockedBy: {
-          none: {
-            blockerId: "viewer-id",
-          },
-        },
+        ...visibleUserWhere("viewer-id"),
         nickname: {
           startsWith: "cat",
           mode: "insensitive",
@@ -118,18 +108,7 @@ describe("SearchService", () => {
     expect(prisma.cat.findMany).toHaveBeenCalledWith({
       take: 20,
       where: {
-        butler: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
-        },
+        butler: visibleUserWhere("viewer-id"),
         OR: [
           {
             name: {

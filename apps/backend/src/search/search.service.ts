@@ -16,7 +16,8 @@ type ProfileImageOwner = {
 
 type PostWithStorageUrls = {
   author?: ProfileImageOwner | null
-  cat?: ProfileImageOwner | null
+  cats?: ProfileImageOwner[]
+  postCats?: Array<{ cat: ProfileImageOwner }>
   images?: Array<{ url: string }>
 }
 
@@ -49,7 +50,10 @@ export class SearchService {
 
   private getPostInclude(viewerId: string) {
     return {
-      cat: true,
+      postCats: {
+        orderBy: { order: "asc" },
+        include: { cat: true },
+      },
       author: {
         select: {
           id: true,
@@ -70,15 +74,21 @@ export class SearchService {
   }
 
   private getVisiblePostWhere(viewerId: string) {
+    const visibleUserWhere = getVisibleUserWhere(viewerId)
+
     return {
-      author: getVisibleUserWhere(viewerId),
+      author: visibleUserWhere,
       OR: [
         {
-          catId: null,
+          postCats: { none: {} },
         },
         {
-          cat: {
-            butler: getVisibleUserWhere(viewerId),
+          postCats: {
+            some: {
+              cat: {
+                butler: visibleUserWhere,
+              },
+            },
           },
         },
       ],
@@ -118,14 +128,21 @@ export class SearchService {
     const postWithStorageUrls = post as T & PostWithStorageUrls
     const formatted = {
       ...post,
-    } as T & PostWithStorageUrls
+    } as T & PostWithStorageUrls & { postCats?: Array<{ cat: ProfileImageOwner }> }
 
     if (postWithStorageUrls.author !== undefined) {
       formatted.author = this.formatProfileImage(postWithStorageUrls.author)
     }
 
-    if (postWithStorageUrls.cat !== undefined) {
-      formatted.cat = this.formatProfileImage(postWithStorageUrls.cat)
+    if (postWithStorageUrls.cats !== undefined) {
+      formatted.cats = postWithStorageUrls.cats.map((cat) => this.formatProfileImage(cat))
+    }
+
+    if (postWithStorageUrls.postCats !== undefined) {
+      formatted.cats = postWithStorageUrls.postCats.map((postCat) =>
+        this.formatProfileImage(postCat.cat),
+      )
+      delete formatted.postCats
     }
 
     if (postWithStorageUrls.images !== undefined) {

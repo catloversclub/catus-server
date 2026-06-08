@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common"
+import { Injectable, NotFoundException } from "@nestjs/common"
 import { PrismaService } from "@app/prisma/prisma.service"
 import { StorageService } from "@app/storage/storage.service"
 
@@ -33,6 +33,7 @@ export class ShareService {
       where: { id },
       select: {
         content: true,
+        isShareable: true,
         author: {
           select: {
             nickname: true,
@@ -48,6 +49,10 @@ export class ShareService {
         },
       },
     })
+
+    if (post.isShareable === false) {
+      throw new NotFoundException("post not found")
+    }
 
     return this.buildRedirectHtml({
       title: `@${post.author.nickname}님의 게시물`,

@@ -40,15 +40,21 @@ export class CommentService {
   }
 
   private getVisiblePostWhere(viewerId: string) {
+    const visibleUserWhere = getVisibleUserWhere(viewerId)
+
     return {
-      author: getVisibleUserWhere(viewerId),
+      author: visibleUserWhere,
       OR: [
         {
-          catId: null,
+          postCats: { none: {} },
         },
         {
-          cat: {
-            butler: getVisibleUserWhere(viewerId),
+          postCats: {
+            some: {
+              cat: {
+                butler: visibleUserWhere,
+              },
+            },
           },
         },
       ],
@@ -74,7 +80,7 @@ export class CommentService {
           id: postId,
           ...this.getVisiblePostWhere(authorId),
         },
-        select: { id: true, authorId: true },
+        select: { id: true, authorId: true, isCommentable: true },
       }),
       this.prisma.user.findUniqueOrThrow({
         where: { id: authorId },
@@ -84,6 +90,10 @@ export class CommentService {
 
     if (!post) {
       throw new BadRequestException("post not found")
+    }
+
+    if (!post.isCommentable) {
+      throw new ForbiddenException("comments are disabled for this post")
     }
 
     let normalizedParentId: string | null = null

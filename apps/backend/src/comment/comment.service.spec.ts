@@ -8,7 +8,11 @@ import { ForbiddenException } from "@nestjs/common"
 describe("CommentService", () => {
   const prisma = {
     post: {
+      findFirst: jest.fn(),
       findFirstOrThrow: jest.fn(),
+    },
+    user: {
+      findUniqueOrThrow: jest.fn(),
     },
     comment: {
       deleteMany: jest.fn(),
@@ -21,6 +25,37 @@ describe("CommentService", () => {
   }
 
   const service = new CommentService(prisma as any, {} as any, storage as any)
+
+  const visibleUserWhere = (viewerId: string) => ({
+    blocking: {
+      none: {
+        blockedId: viewerId,
+      },
+    },
+    blockedBy: {
+      none: {
+        blockerId: viewerId,
+      },
+    },
+  })
+
+  const visiblePostWhere = (viewerId: string) => ({
+    author: visibleUserWhere(viewerId),
+    OR: [
+      {
+        postCats: { none: {} },
+      },
+      {
+        postCats: {
+          some: {
+            cat: {
+              butler: visibleUserWhere(viewerId),
+            },
+          },
+        },
+      },
+    ],
+  })
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -43,39 +78,7 @@ describe("CommentService", () => {
     expect(prisma.post.findFirstOrThrow).toHaveBeenCalledWith({
       where: {
         id: "post-id",
-        author: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
-        },
-        OR: [
-          {
-            catId: null,
-          },
-          {
-            cat: {
-              butler: {
-                blocking: {
-                  none: {
-                    blockedId: "viewer-id",
-                  },
-                },
-                blockedBy: {
-                  none: {
-                    blockerId: "viewer-id",
-                  },
-                },
-              },
-            },
-          },
-        ],
+        ...visiblePostWhere("viewer-id"),
       },
       select: { id: true },
     })
@@ -84,18 +87,7 @@ describe("CommentService", () => {
       where: {
         postId: "post-id",
         parentId: null,
-        author: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
-        },
+        author: visibleUserWhere("viewer-id"),
         post: expect.any(Object),
       },
       orderBy: { id: "desc" },
@@ -104,23 +96,25 @@ describe("CommentService", () => {
     expect(prisma.comment.findMany).toHaveBeenNthCalledWith(2, {
       where: {
         parentId: { in: ["comment-id"] },
-        author: {
-          blocking: {
-            none: {
-              blockedId: "viewer-id",
-            },
-          },
-          blockedBy: {
-            none: {
-              blockerId: "viewer-id",
-            },
-          },
-        },
+        author: visibleUserWhere("viewer-id"),
         post: expect.any(Object),
       },
       orderBy: { id: "asc" },
       include: expect.any(Object),
     })
+  })
+
+  it("rejects creating a comment when the post has comments disabled", async () => {
+    prisma.post.findFirst.mockResolvedValue({
+      id: "post-id",
+      authorId: "post-author-id",
+      isCommentable: false,
+    })
+    prisma.user.findUniqueOrThrow.mockResolvedValue({ nickname: "actor" })
+
+    await expect(
+      service.create("post-id", "comment-author-id", { content: "blocked" }),
+    ).rejects.toBeInstanceOf(ForbiddenException)
   })
 
   it("deletes a comment only when the requester is the author", async () => {

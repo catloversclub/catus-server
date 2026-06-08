@@ -139,7 +139,7 @@ model Cat {
   butlerId      String
   appearances   Appearance[]
   personalities Personality[]
-  posts         Post[]
+  postCats      PostCat[]
   followedBy    FollowCat[]
 
   @@index([butlerId, id])
@@ -167,26 +167,41 @@ model Personality {
 }
 
 model Post {
-  id        String   @id @default(uuid(7))
-  likeCount Int      @default(0) @map("like_count")
-  content   String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid(7))
+  likeCount     Int      @default(0) @map("like_count")
+  content       String?
+  isShareable   Boolean  @default(true) @map("is_shareable")
+  isCommentable Boolean  @default(true) @map("is_commentable")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   authorId String  @map("author_id")
   author   User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  catId    String? @map("cat_id")
-  cat      Cat?    @relation(fields: [catId], references: [id], onDelete: SetNull)
 
   images    PostImage[]
+  postCats  PostCat[]
   comments  Comment[]
   likes     PostLike[]
   bookmarks PostBookmark[]
   Report    Report[]
 
   @@index([authorId, id])
-  @@index([catId, id])
   @@map("post")
+}
+
+model PostCat {
+  postId    String   @map("post_id")
+  catId     String   @map("cat_id")
+  order     Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  cat  Cat  @relation(fields: [catId], references: [id], onDelete: Cascade)
+
+  @@id([postId, catId])
+  @@unique([postId, order])
+  @@index([catId, postId])
+  @@map("post_cat")
 }
 
 model PostImage {

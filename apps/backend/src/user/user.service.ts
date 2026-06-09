@@ -77,6 +77,59 @@ export class UserService {
     }
   }
 
+  private async syncFollowCounts(tx: Prisma.TransactionClient, userIds: string[]) {
+    const uniqueUserIds = [...new Set(userIds)]
+
+    if (uniqueUserIds.length === 0) {
+      return
+    }
+
+    const [followerCounts, followingCounts] = await Promise.all([
+      tx.follow.groupBy({
+        by: ["followingId"],
+        where: {
+          followingId: {
+            in: uniqueUserIds,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+      tx.follow.groupBy({
+        by: ["followerId"],
+        where: {
+          followerId: {
+            in: uniqueUserIds,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+    ])
+
+    const followerCountByUserId = new Map(
+      followerCounts.map((item) => [item.followingId, item._count._all]),
+    )
+    const followingCountByUserId = new Map(
+      followingCounts.map((item) => [item.followerId, item._count._all]),
+    )
+
+    await Promise.all(
+      uniqueUserIds.map((id) =>
+        tx.user.update({
+          where: { id },
+          data: {
+            followerCount: followerCountByUserId.get(id) ?? 0,
+            followingCount: followingCountByUserId.get(id) ?? 0,
+          },
+          select: { id: true },
+        }),
+      ),
+    )
+  }
+
   async create(createUserDto: CreateUserDto, identity: { provider: Provider; id: string }) {
     const { favoritePersonalities, favoriteAppearances, ...rest } = createUserDto
     const normalizedRest = this.normalizeProfileImageUrl(rest)
@@ -648,7 +701,36 @@ export class UserService {
   }
 
   async remove(userId: string) {
-    const user = await this.prisma.user.delete({ where: { id: userId } })
+    const user = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT "id"
+        FROM "user"
+        WHERE "id" = ${userId}
+        FOR UPDATE
+      `
+
+      const [followers, followings] = await Promise.all([
+        tx.follow.findMany({
+          where: { followingId: userId },
+          select: { followerId: true },
+        }),
+        tx.follow.findMany({
+          where: { followerId: userId },
+          select: { followingId: true },
+        }),
+      ])
+
+      const affectedUserIds = [
+        ...followers.map((item) => item.followerId),
+        ...followings.map((item) => item.followingId),
+      ].filter((id) => id !== userId)
+
+      const deletedUser = await tx.user.delete({ where: { id: userId } })
+
+      await this.syncFollowCounts(tx, affectedUserIds)
+
+      return deletedUser
+    })
 
     return this.formatProfileImage(user)
   }

@@ -268,6 +268,92 @@ describe("UserService", () => {
     })
   })
 
+  it("removes a user and syncs follow counts for affected users after cascade deletes", async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: "deleted-id" }]),
+      user: {
+        delete: jest.fn().mockResolvedValue({ id: "deleted-id", profileImageUrl: null }),
+        update: jest.fn().mockResolvedValue({ id: "updated-id" }),
+      },
+      follow: {
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ followerId: "follower-id" }, { followerId: "mutual-id" }])
+          .mockResolvedValueOnce([{ followingId: "following-id" }, { followingId: "mutual-id" }]),
+        groupBy: jest
+          .fn()
+          .mockResolvedValueOnce([{ followingId: "mutual-id", _count: { _all: 3 } }])
+          .mockResolvedValueOnce([
+            { followerId: "follower-id", _count: { _all: 2 } },
+            { followerId: "mutual-id", _count: { _all: 4 } },
+          ]),
+      },
+    }
+    const prisma = {
+      $transaction: jest.fn((callback) => callback(tx)),
+    }
+    const service = buildService(prisma)
+
+    await expect(service.remove("deleted-id")).resolves.toEqual({
+      id: "deleted-id",
+      profileImageUrl: null,
+    })
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1)
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.follow.findMany.mock.invocationCallOrder[0],
+    )
+    expect(tx.follow.findMany).toHaveBeenNthCalledWith(1, {
+      where: { followingId: "deleted-id" },
+      select: { followerId: true },
+    })
+    expect(tx.follow.findMany).toHaveBeenNthCalledWith(2, {
+      where: { followerId: "deleted-id" },
+      select: { followingId: true },
+    })
+    expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: "deleted-id" } })
+    expect(tx.user.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.follow.groupBy.mock.invocationCallOrder[0],
+    )
+    expect(tx.follow.groupBy).toHaveBeenNthCalledWith(1, {
+      by: ["followingId"],
+      where: {
+        followingId: {
+          in: ["follower-id", "mutual-id", "following-id"],
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    })
+    expect(tx.follow.groupBy).toHaveBeenNthCalledWith(2, {
+      by: ["followerId"],
+      where: {
+        followerId: {
+          in: ["follower-id", "mutual-id", "following-id"],
+        },
+      },
+      _count: {
+        _all: true,
+      },
+    })
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "follower-id" },
+      data: { followerCount: 0, followingCount: 2 },
+      select: { id: true },
+    })
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "mutual-id" },
+      data: { followerCount: 3, followingCount: 4 },
+      select: { id: true },
+    })
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "following-id" },
+      data: { followerCount: 0, followingCount: 0 },
+      select: { id: true },
+    })
+  })
+
   it("returns blocked users with cursors", async () => {
     const prisma = {
       getPaginator: jest.fn().mockReturnValue({ skip: 1, cursor: { id: 10 } }),

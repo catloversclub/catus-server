@@ -6,6 +6,9 @@ describe("ShareService", () => {
     post: {
       findUniqueOrThrow: jest.fn(),
     },
+    cat: {
+      findUniqueOrThrow: jest.fn(),
+    },
     user: {
       findUniqueOrThrow: jest.fn(),
     },
@@ -107,6 +110,67 @@ describe("ShareService", () => {
     expect(html).toContain(
       '<meta property="og:image" content="https://cdn.catus.app/users/author/profile.webp" />',
     )
+  })
+
+  it("builds cat OG HTML and redirects to the cat deep link", async () => {
+    prisma.cat.findUniqueOrThrow.mockResolvedValue({
+      name: "나비",
+      breed: "코리안 숏헤어",
+      profileImageUrl: "cats/cat-id/profile.webp",
+      butler: {
+        nickname: "choco",
+      },
+    })
+
+    const html = await service.getCatShareHtml(
+      "cat-id",
+      "https://api.catus.app/share/cat/cat-id",
+    )
+
+    expect(prisma.cat.findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { id: "cat-id" },
+      select: {
+        name: true,
+        breed: true,
+        profileImageUrl: true,
+        butler: {
+          select: {
+            nickname: true,
+          },
+        },
+      },
+    })
+    expect(html).toContain('<meta property="og:title" content="나비의 프로필" />')
+    expect(html).toContain(
+      '<meta property="og:description" content="코리안 숏헤어 · @choco님의 고양이" />',
+    )
+    expect(html).toContain(
+      '<meta property="og:image" content="https://cdn.catus.app/cats/cat-id/profile.webp" />',
+    )
+    expect(html).toContain(
+      '<meta property="og:url" content="https://api.catus.app/share/cat/cat-id" />',
+    )
+    expect(html).toContain('<meta http-equiv="refresh" content="0;url=catus://cat/cat-id" />')
+    expect(html).toContain('<script>window.location.href = "catus://cat/cat-id"</script>')
+  })
+
+  it("falls back to generic cat description when breed is blank", async () => {
+    prisma.cat.findUniqueOrThrow.mockResolvedValue({
+      name: "모모",
+      breed: "  ",
+      profileImageUrl: null,
+      butler: {
+        nickname: "nabi",
+      },
+    })
+
+    const html = await service.getCatShareHtml(
+      "cat-id",
+      "https://api.catus.app/share/cat/cat-id",
+    )
+
+    expect(html).toContain('<meta property="og:description" content="고양이 · @nabi님의 고양이" />')
+    expect(html).toContain('<meta property="og:image" content="" />')
   })
 
   it("builds user OG HTML and redirects to the user deep link", async () => {

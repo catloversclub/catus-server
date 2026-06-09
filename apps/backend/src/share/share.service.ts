@@ -63,6 +63,32 @@ export class ShareService {
     })
   }
 
+  async getCatShareHtml(id: string, shareUrl: string) {
+    const encodedId = encodeURIComponent(id)
+    const cat = await this.prisma.cat.findUniqueOrThrow({
+      where: { id },
+      select: {
+        name: true,
+        breed: true,
+        profileImageUrl: true,
+        butler: {
+          select: {
+            nickname: true,
+          },
+        },
+      },
+    })
+    const descriptionPrefix = cat.breed?.trim() || "고양이"
+
+    return this.buildRedirectHtml({
+      title: `${cat.name}의 프로필`,
+      description: `${descriptionPrefix} · @${cat.butler.nickname}님의 고양이`,
+      imageUrl: this.toPublicUrl(cat.profileImageUrl),
+      ogUrl: shareUrl,
+      redirectUrl: `catus://cat/${encodedId}`,
+    })
+  }
+
   async getUserShareHtml(id: string, shareUrl: string) {
     const encodedId = encodeURIComponent(id)
     const user = await this.prisma.user.findUniqueOrThrow({

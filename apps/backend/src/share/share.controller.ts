@@ -12,6 +12,12 @@ export class ShareController {
     return this.shareService.getPostShareHtml(id, this.getShareUrl(req))
   }
 
+  @Get("cat/:id")
+  @Header("Content-Type", "text/html")
+  getCatShareHtml(@Param("id") id: string, @Req() req: Request) {
+    return this.shareService.getCatShareHtml(id, this.getShareUrl(req))
+  }
+
   @Get("user/:id")
   @Header("Content-Type", "text/html")
   getUserShareHtml(@Param("id") id: string, @Req() req: Request) {

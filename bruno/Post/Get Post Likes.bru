@@ -1,0 +1,20 @@
+meta {
+  name: Get Post Likes
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/post/:id/likes?take=20
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id:
+}
+
+params:query {
+  take: 20
+  ~cursor:
+}

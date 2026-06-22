@@ -112,6 +112,16 @@ export class PostController {
     return this.postService.unlikePost(id, req.user.id!)
   }
 
+  @Get(":id/likes")
+  getPostLikedUsers(
+    @Req() req: AuthenticatedRequest,
+    @Param("id") id: string,
+    @Query("cursor") cursor?: string,
+    @Query("take", new DefaultValuePipe(20), ParseIntPipe) take?: number,
+  ) {
+    return this.postService.getPostLikedUsers(id, req.user.id!, cursor ?? null, take)
+  }
+
   @Post(":id/bookmark")
   bookmarkPost(@Req() req: AuthenticatedRequest, @Param("id") id: string) {
     return this.postService.bookmarkPost(id, req.user.id!)

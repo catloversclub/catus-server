@@ -13,14 +13,19 @@ describe("PostService", () => {
       findMany: jest.fn(),
     },
     postLike: {
+      findMany: jest.fn(),
       groupBy: jest.fn(),
     },
     post: {
       create: jest.fn(),
+      findFirstOrThrow: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
+    },
+    follow: {
+      findMany: jest.fn(),
     },
     postImage: {
       createMany: jest.fn(),
@@ -377,5 +382,90 @@ describe("PostService", () => {
       orderBy: { id: "desc" },
       include: expect.any(Object),
     })
+  })
+
+  it("returns users who liked a visible post with follow state", async () => {
+    prisma.post.findFirstOrThrow.mockResolvedValue({ id: "post-id" })
+    prisma.postLike.findMany.mockResolvedValue([
+      {
+        userId: "liker-a",
+        user: {
+          id: "liker-a",
+          nickname: "nabi",
+          profileImageUrl: "users/liker-a/profile.webp",
+        },
+      },
+      {
+        userId: "liker-b",
+        user: {
+          id: "liker-b",
+          nickname: "choco",
+          profileImageUrl: null,
+        },
+      },
+    ])
+    prisma.follow.findMany.mockResolvedValue([{ followingId: "liker-b" }])
+
+    const result = await service.getPostLikedUsers("post-id", "viewer-id", "cursor-user-id", 10)
+
+    expect(prisma.post.findFirstOrThrow).toHaveBeenCalledWith({
+      where: {
+        id: "post-id",
+        ...visiblePostWhere("viewer-id"),
+      },
+      select: { id: true },
+    })
+    expect(prisma.postLike.findMany).toHaveBeenCalledWith({
+      skip: 1,
+      cursor: {
+        postId_userId: {
+          postId: "post-id",
+          userId: "cursor-user-id",
+        },
+      },
+      take: 10,
+      where: {
+        postId: "post-id",
+        user: visibleUserWhere("viewer-id"),
+      },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            id: true,
+            nickname: true,
+            profileImageUrl: true,
+          },
+        },
+      },
+      orderBy: [{ createdAt: "desc" }, { userId: "desc" }],
+    })
+    expect(prisma.follow.findMany).toHaveBeenCalledWith({
+      where: {
+        followerId: "viewer-id",
+        followingId: {
+          in: ["liker-a", "liker-b"],
+        },
+      },
+      select: {
+        followingId: true,
+      },
+    })
+    expect(result).toEqual([
+      {
+        id: "liker-a",
+        nickname: "nabi",
+        profileImageUrl: "users/liker-a/profile.webp",
+        isFollowedByMe: false,
+        cursor: "liker-a",
+      },
+      {
+        id: "liker-b",
+        nickname: "choco",
+        profileImageUrl: null,
+        isFollowedByMe: true,
+        cursor: "liker-b",
+      },
+    ])
   })
 })

@@ -784,6 +784,81 @@ export class PostService {
     })
   }
 
+  async getPostLikedUsers(
+    postId: string,
+    viewerId: string,
+    cursor?: string | null,
+    take = 20,
+  ) {
+    const pagination: {
+      skip?: number
+      cursor?: { postId_userId: { postId: string; userId: string } }
+    } =
+      cursor == null
+        ? {}
+        : {
+            skip: 1,
+            cursor: {
+              postId_userId: {
+                postId,
+                userId: cursor,
+              },
+            },
+          }
+
+    await this.prisma.post.findFirstOrThrow({
+      where: {
+        id: postId,
+        ...this.getVisiblePostWhere(viewerId),
+      },
+      select: { id: true },
+    })
+
+    const likes = await this.prisma.postLike.findMany({
+      ...pagination,
+      take,
+      where: {
+        postId,
+        user: getVisibleUserWhere(viewerId),
+      },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            id: true,
+            nickname: true,
+            profileImageUrl: true,
+          },
+        },
+      },
+      orderBy: [{ createdAt: "desc" }, { userId: "desc" }],
+    })
+
+    const likedUserIds = likes.map((item) => item.userId)
+    const myFollowings = likedUserIds.length
+      ? await this.prisma.follow.findMany({
+          where: {
+            followerId: viewerId,
+            followingId: {
+              in: likedUserIds,
+            },
+          },
+          select: {
+            followingId: true,
+          },
+        })
+      : []
+    const followedSet = new Set(myFollowings.map((item) => item.followingId))
+
+    return likes.map((item) => ({
+      id: item.user.id,
+      nickname: item.user.nickname,
+      profileImageUrl: this.toPublicProfileImageUrl(item.user.profileImageUrl),
+      isFollowedByMe: followedSet.has(item.user.id),
+      cursor: item.userId,
+    }))
+  }
+
   async bookmarkPost(postId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
       const post = await tx.post.findFirst({

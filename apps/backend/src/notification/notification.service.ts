@@ -26,6 +26,15 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 }
 type NotificationSettings = typeof DEFAULT_NOTIFICATION_SETTINGS
 type NotificationSettingKey = Exclude<keyof NotificationSettings, "allEnabled">
+type NotificationRecord = {
+  id: string
+  userId: string
+  title: string | null
+  body: string | null
+  data: Prisma.JsonValue | null
+  readAt: Date | null
+  createdAt: Date
+}
 const NOTIFICATION_TYPE_SETTING_KEYS: Record<string, NotificationSettingKey> = {
   POST_LIKE: "postLikeEnabled",
   COMMENT_CREATED: "commentEnabled",
@@ -143,22 +152,9 @@ export class NotificationService {
 
   async getNotifications(userId: string, cursor?: string | null, take = 20) {
     const readAt = new Date()
-    const pagination = this.prisma.getPaginator(cursor ?? null)
 
     const [notifications] = await this.prisma.$transaction([
-      this.prisma.notification.findMany({
-        ...pagination,
-        take,
-        where: {
-          userId,
-          createdAt: {
-            lte: readAt,
-          },
-        },
-        orderBy: {
-          id: "desc",
-        },
-      }),
+      this.findVisibleNotifications(userId, cursor ?? null, take, readAt),
       this.prisma.notification.updateMany({
         where: {
           userId,
@@ -203,11 +199,50 @@ export class NotificationService {
       ]),
     )
 
-    return notifications.map((notification) => ({
+    const visibleNotifications = notifications.filter((notification) =>
+      this.hasVisibleNotificationActor(notification.data, actorById),
+    )
+
+    return visibleNotifications.map((notification) => ({
       ...notification,
       readAt: notification.readAt ?? readAt,
       actor: this.getNotificationActor(notification.data, actorById),
     }))
+  }
+
+  private findVisibleNotifications(
+    userId: string,
+    cursor: string | null,
+    take: number,
+    readAt: Date,
+  ) {
+    const cursorFilter =
+      cursor == null ? Prisma.empty : Prisma.sql`AND n."id" < ${cursor}`
+
+    return this.prisma.$queryRaw<NotificationRecord[]>`
+      SELECT
+        n."id",
+        n."user_id" AS "userId",
+        n."title",
+        n."body",
+        n."data",
+        n."read_at" AS "readAt",
+        n."created_at" AS "createdAt"
+      FROM "notification" n
+      WHERE n."user_id" = ${userId}
+        AND n."created_at" <= ${readAt}
+        ${cursorFilter}
+        AND (
+          COALESCE(n."data"->>'actorId', n."data"->>'followerId') IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM "user" actor
+            WHERE actor."id" = COALESCE(n."data"->>'actorId', n."data"->>'followerId')
+          )
+        )
+      ORDER BY n."id" DESC
+      LIMIT ${take}
+    `
   }
 
   async deleteNotification(userId: string, notificationId: string) {
@@ -580,6 +615,14 @@ export class NotificationService {
     }
 
     return actorById.get(actorId) ?? { id: actorId, imageUrl: null }
+  }
+
+  private hasVisibleNotificationActor(
+    data: Prisma.JsonValue | null,
+    actorById: Map<string, { id: string; imageUrl: string | null }>,
+  ) {
+    const actorId = this.getNotificationActorId(data)
+    return actorId == null || actorById.has(actorId)
   }
 
   private getNotificationActorId(data: Prisma.JsonValue | null) {

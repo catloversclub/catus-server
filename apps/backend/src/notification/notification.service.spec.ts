@@ -38,6 +38,7 @@ describe("NotificationService", () => {
       findMany: jest.fn(),
     },
     getPaginator: jest.fn(),
+    $queryRaw: jest.fn(),
     $transaction: jest.fn((queries: Array<Promise<unknown>>) => Promise.all(queries)),
   }
   const storage = {
@@ -48,6 +49,7 @@ describe("NotificationService", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     prisma.getPaginator.mockReturnValue({})
+    prisma.$queryRaw.mockResolvedValue([])
     prisma.notificationSetting.findMany.mockResolvedValue([])
     prisma.notificationSetting.findUnique.mockResolvedValue(null)
     prisma.notification.createMany.mockResolvedValue({ count: 0 })
@@ -59,7 +61,7 @@ describe("NotificationService", () => {
   it("adds actor imageUrl when notifications contain actorId or followerId", async () => {
     const alreadyReadAt = new Date("2026-06-01T00:00:00.000Z")
 
-    prisma.notification.findMany.mockResolvedValue([
+    prisma.$queryRaw.mockResolvedValue([
       {
         id: "notification-1",
         userId: "recipient-id",
@@ -139,6 +141,93 @@ describe("NotificationService", () => {
     })
     expect(result[2]).toMatchObject({
       id: "notification-3",
+      actor: null,
+    })
+  })
+
+  it("hides notifications whose actor user has been removed", async () => {
+    prisma.$queryRaw.mockResolvedValue([
+      {
+        id: "notification-1",
+        userId: "recipient-id",
+        title: "actor",
+        body: "liked",
+        data: {
+          type: "POST_LIKE",
+          actorId: "actor-id",
+          postId: "post-id",
+        },
+        readAt: null,
+        createdAt: new Date("2026-06-02T00:00:00.000Z"),
+      },
+      {
+        id: "notification-2",
+        userId: "recipient-id",
+        title: "deleted actor",
+        body: "liked",
+        data: {
+          type: "POST_LIKE",
+          actorId: "deleted-actor-id",
+          postId: "post-id",
+        },
+        readAt: null,
+        createdAt: new Date("2026-06-02T00:01:00.000Z"),
+      },
+      {
+        id: "notification-3",
+        userId: "recipient-id",
+        title: "새로운 팔로워",
+        body: "followed",
+        data: {
+          type: "USER_FOLLOWED",
+          followerId: "deleted-follower-id",
+        },
+        readAt: null,
+        createdAt: new Date("2026-06-02T00:02:00.000Z"),
+      },
+      {
+        id: "notification-4",
+        userId: "recipient-id",
+        title: "[공지] 안내",
+        body: "notice",
+        data: {
+          type: "NOTICE",
+        },
+        readAt: null,
+        createdAt: new Date("2026-06-02T00:03:00.000Z"),
+      },
+    ])
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: "actor-id",
+        profileImageUrl: null,
+      },
+    ])
+
+    const result = await service.getNotifications("recipient-id")
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith({
+      where: {
+        id: {
+          in: ["actor-id", "deleted-actor-id", "deleted-follower-id"],
+        },
+      },
+      select: {
+        id: true,
+        profileImageUrl: true,
+      },
+    })
+    expect(result.map((notification) => notification.id)).toEqual([
+      "notification-1",
+      "notification-4",
+    ])
+    expect(result[0]).toMatchObject({
+      actor: {
+        id: "actor-id",
+        imageUrl: null,
+      },
+    })
+    expect(result[1]).toMatchObject({
       actor: null,
     })
   })
